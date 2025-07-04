@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 DGIS_API_KEY = os.getenv("DGIS_API_KEY")
-DEFAULT_RADIUS_KM = 2.0
+DEFAULT_RADIUS_KM = 1.0
 SEARCH_KEYWORDS = "кафе, ресторан, столовая"
 ASKING_RADIUS = 1
 
@@ -37,15 +37,35 @@ tf = TimezoneFinder()
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 async def get_coordinates_and_timezone(address: str) -> tuple | None:
-    url = "https://catalog.api.2gis.com/3.0/items/geocode"; params = { "q": address, "key": DGIS_API_KEY, "fields": "items.point" }
+    """Получает координаты и часовой пояс для заданного адреса с логированием ошибок."""
+    url = "https://catalog.api.2gis.com/3.0/items/geocode"
+    params = { "q": address, "key": DGIS_API_KEY, "fields": "items.point" }
     try:
-        response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
+        response = requests.get(url, params=params)
+        response.raise_for_status()  # Проверяем на HTTP-ошибки типа 4xx/5xx
+        data = response.json()
+        
+        # Успешный ответ от API, но без результатов
         if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
-            point = data["result"]["items"][0]["point"]; lat, lon = point['lat'], point['lon']; timezone_str = tf.timezone_at(lng=lon, lat=lat)
-            if not timezone_str: return lat, lon, None
+            point = data["result"]["items"][0]["point"]
+            lat, lon = point['lat'], point['lon']
+            
+            timezone_str = tf.timezone_at(lng=lon, lat=lat)
+            if not timezone_str:
+                logger.warning(f"Найдены координаты для '{address}', но не удалось определить часовой пояс.")
+                return lat, lon, None
+                
             return lat, lon, timezone_str
+        else:
+            # --- ЛОГ ПРИ НЕУДАЧНОМ ПОИСКЕ ---
+            logger.warning(f"2GIS API не нашел координат для адреса '{address}'. Ответ: {data}")
+            return None
+            
+    except requests.RequestException as e:
+        # --- ЛОГ ПРИ ОШИБКЕ СЕТИ ---
+        logger.error(f"Ошибка сети при запросе к 2GIS Geocode API для адреса '{address}': {e}")
         return None
-    except requests.RequestException: return None
+    
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
     for page_num in range(1, 11):
