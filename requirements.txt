@@ -1,0 +1,6 @@
+python-telegram-bot[persistence]
+python-telegram-bot[job-queue]
+requests
+python-dotenv
+timezonefinder
+numpy
