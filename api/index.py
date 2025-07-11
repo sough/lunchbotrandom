@@ -1,9 +1,12 @@
 # api/index.py
 import os
+import logging
 import asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import PicklePersistence
+
+logging.basicConfig(level=logging.INFO)
 
 # Импортируем нашу логику
 from bot_logic import setup_application
@@ -29,6 +32,7 @@ def webhook(path):
 async def process_update():
     # Получаем данные из запроса
     update_data = request.get_json(force=True)
+    logging.info(f"Получено обновление: {update_data}")
     update = Update.de_json(update_data, application.bot)
     
     # Передаем обновление в очередь для обработки
