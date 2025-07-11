@@ -87,7 +87,7 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
         
     title = "🎉 *Выбор сделан\\!* 🎉" if is_new_search else "🎉 *Новый вариант\\!* 🎉"
     name = escape_markdown_v2(place.get('name', ''))
-    address = escape_markdown_v2(place.get('address_name', ''))
+    address = escape_markdown_v2(place.get('address', ''))
     message_text = f"{title}\n\n📍 *Название:* {name}\n🏠 *Адрес:* {address}\n"
     
     place_coords = (place.get('lat'), place.get('lon'))
