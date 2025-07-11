@@ -14,7 +14,7 @@ from telegram.ext import (
 # --- Setup & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 2
+DEFAULT_RADIUS_KM = 1
 ASKING_RADIUS = 1
 
 # --- Helper & API Functions ---
