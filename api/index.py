@@ -6,7 +6,7 @@ import nest_asyncio
 from fastapi import FastAPI, Request, Response, HTTPException
 
 from telegram import Update
-from telegram.ext import PicklePersistence
+from telegram.ext import Application, PicklePersistence
 
 # Import the function that adds handlers
 from bot_logic import add_handlers
