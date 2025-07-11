@@ -14,8 +14,12 @@ from telegram.ext import (
 # --- Setup & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 2
+DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
+
+# 2GIS Rubric IDs for different food places
+# 374 - Кафе / кофейня, 375 - Ресторан, 377 - Столовая
+FOOD_RUBRIC_IDS = "374,375,377"
 
 # --- Helper & API Functions ---
 def escape_markdown_v2(text: str) -> str:
@@ -30,23 +34,39 @@ async def get_coordinates(address: str) -> tuple | None:
         else: logger.warning(f"2GIS API не нашел координат для адреса '{address}'."); return None
     except requests.RequestException as e: logger.error(f"Ошибка сети при запросе к 2GIS Geocode API: {e}"); return None
 
+# --- MODIFIED FUNCTION ---
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
     for page_num in range(1, 11):
-        url = "https://catalog.api.2gis.com/3.0/items"; params = {'key': os.getenv("DGIS_API_KEY"), 'q': "кафе, ресторан, столовая", 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url', 'page_size': 10, 'page': page_num}
+        params = {
+            'key': os.getenv("DGIS_API_KEY"),
+            'point': f'{lon},{lat}',
+            'radius': radius_meters,
+            'rubric_id': FOOD_RUBRIC_IDS, # Using specific category IDs instead of a text query
+            'type': 'branch',
+            'fields': 'items.name,items.address_name,items.url',
+            'page_size': 10,
+            'page': page_num
+        }
+        url = "https://catalog.api.2gis.com/3.0/items"
         try:
             response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
-            if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"): all_places.extend(data["result"]["items"])
-            else: break
-        except requests.RequestException: break
+            if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
+                all_places.extend(data["result"]["items"])
+            else:
+                break
+        except requests.RequestException:
+            break
+    
     if all_places:
         found_places_names = [place.get('name', 'N/A') for place in all_places]
         logger.info(f"Found {len(found_places_names)} places: {found_places_names}")
-    
         place_choice = random.choice(all_places)
-        return {"name": place_choice.get("name", "Н/Д"), "address": place_choice.get("address_name", "Н/Д"), "url": place_choice.get("url", "")}
+        return {"name": place_choice.get("name", "N/A"), "address": place_choice.get("address_name", "N/A"), "url": place_choice.get("url", "")}
+    
     return None
 
+# ... (The rest of the file remains unchanged) ...
 def create_result_keyboard() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]]; return InlineKeyboardMarkup(keyboard)
 
@@ -98,12 +118,8 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
         await update.message.reply_markdown_v2(f"Отлично\\! Ваш город '{escaped_city}' сохранен\\.\nТеперь отправьте мне улицу и номер дома \\(например, 'Абая 15'\\)\\.")
         return
 
-    city = context.user_data['city']
-    full_address = f"{city}, {user_text}"
-    
-    # --- ВОТ ИСПРАВЛЕНИЕ ---
+    city = context.user_data['city']; full_address = f"{city}, {user_text}"
     escaped_full_address = escape_markdown_v2(full_address)
-    
     await update.message.reply_markdown_v2(f"Ищу заведения рядом с адресом: *{escaped_full_address}*\\.\\.\\.\n_\\(Это может занять несколько секунд\\)_")
     
     coords = await get_coordinates(full_address)
@@ -156,6 +172,5 @@ def add_handlers(application: Application):
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city))
     application.add_handler(CallbackQueryHandler(button_handler))
-    # Этот хендлер должен быть одним из последних, т.к. он ловит любой текст
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
