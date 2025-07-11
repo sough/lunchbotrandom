@@ -5,6 +5,7 @@ import random
 import requests
 import json
 import traceback
+import math # Added for distance calculation
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -14,9 +15,8 @@ from telegram.ext import (
 # --- Setup & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 1
+DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
-FOOD_RUBRIC_IDS = "374,375,377" # Cafe, Restaurant, Canteen
 
 # --- Helper & API Functions ---
 def escape_markdown_v2(text: str) -> str:
@@ -31,25 +31,46 @@ async def get_coordinates(address: str) -> tuple | None:
         else: logger.warning(f"2GIS API не нашел координат для адреса '{address}'."); return None
     except requests.RequestException as e: logger.error(f"Ошибка сети при запросе к 2GIS Geocode API: {e}"); return None
 
+# --- NEW FUNCTION ---
+def get_straight_line_distance(start_coords: tuple, end_coords: tuple) -> int:
+    """Calculates the straight-line distance between two points in meters."""
+    R = 6371e3  # Earth radius in meters
+    lat1, lon1 = start_coords
+    lat2, lon2 = end_coords
+
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi / 2) * math.sin(delta_phi / 2) + \
+        math.cos(phi1) * math.cos(phi2) * \
+        math.sin(delta_lambda / 2) * math.sin(delta_lambda / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    distance = R * c
+    return int(distance)
+
+
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
     for page_num in range(1, 11):
-        # Added lon,lat fields to get the exact coordinates of the found place
-        params = {'key': os.getenv("DGIS_API_KEY"), 'point': f'{lon},{lat}', 'radius': radius_meters, 'rubric_id': FOOD_RUBRIC_IDS, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url,items.point_info', 'page_size': 10, 'page': page_num}
+        params = {'key': os.getenv("DGIS_API_KEY"), 'q': 'поесть', 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url,items.point_info', 'page_size': 10, 'page': page_num}
         url = "https://catalog.api.2gis.com/3.0/items"
         try:
             response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
             if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
                 all_places.extend(data["result"]["items"])
-            else: break
-        except requests.RequestException: break
+            else:
+                break
+        except requests.RequestException:
+            break
     
     if all_places:
         found_places_names = [place.get('name', 'N/A') for place in all_places]
         logger.info(f"Found {len(found_places_names)} places: {found_places_names}")
         place_choice = random.choice(all_places)
         
-        # Extract coordinates from the nested structure
         point_info = place_choice.get('point_info', {})
         point_coords = point_info.get('point', {})
         
@@ -62,41 +83,12 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
         }
     return None
 
-# --- NEW FUNCTION ---
-async def get_walking_route_info(start_coords: tuple, end_coords: tuple) -> dict | None:
-    """Gets walking distance and duration from 2GIS Directions API."""
-    start_lat, start_lon = start_coords
-    end_lat, end_lon = end_coords
-
-    url = "https://routing.api.2gis.com/2.0/route"
-    params = {
-        'key': os.getenv("DGIS_API_KEY"),
-        'start': f'{start_lon},{start_lat}',
-        'end': f'{end_lon},{end_lat}',
-        'type': 'pedestrian' # pedestrian, car, cargo_car, public_transport
-    }
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if data.get('meta', {}).get('code') == 200 and data.get('result', {}).get('routes'):
-            route = data['result']['routes'][0]
-            distance = route.get('distance') # in meters
-            duration = route.get('duration') # in seconds
-            return {"distance": distance, "duration": duration}
-        else:
-            logger.warning(f"Could not calculate route. API response: {data}")
-            return None
-    except requests.RequestException as e:
-        logger.error(f"Network error querying 2GIS Directions API: {e}")
-        return None
-
 def create_result_keyboard() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]]; return InlineKeyboardMarkup(keyboard)
 
 # --- MODIFIED FUNCTION ---
 async def perform_search_and_reply(update: Update, context: CallbackContext, coords: tuple, is_new_search: bool = False):
-    """Performs search, gets route info, and sends the result."""
+    """Performs search and sends the result with straight-line distance."""
     if update.callback_query:
         await update.callback_query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
     
@@ -115,16 +107,11 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     address = escape_markdown_v2(place['address'])
     message_text = f"{title}\n\n📍 *Название:* {name}\n🏠 *Адрес:* {address}\n"
     
-    # Get walking distance if we have all coordinates
+    # Calculate and add straight-line distance
     place_coords = (place.get('lat'), place.get('lon'))
     if all(place_coords):
-        route_info = await get_walking_route_info(start_coords=coords, end_coords=place_coords)
-        if route_info:
-            distance_m = route_info.get('distance', 0)
-            duration_s = route_info.get('duration', 0)
-            # Convert to minutes, rounding up
-            duration_min = round(duration_s / 60)
-            message_text += f"🚶 *Пешком:* примерно {duration_min} мин \\({distance_m} м\\)\n"
+        distance_m = get_straight_line_distance(start_coords=coords, end_coords=place_coords)
+        message_text += f"📏 *Расстояние:* примерно {distance_m} м по прямой\n"
 
     message_text += f"\n[Посмотреть на карте 2GIS]({place.get('url')})"
     
