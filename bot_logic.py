@@ -176,11 +176,10 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
-def setup_application(persistence: PicklePersistence) -> Application:
+def setup_application(persistence: PicklePersistence, bot_token: str) -> Application:
     """Настраивает и возвращает объект Application."""
-    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     
-    application = (Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build())
+    application = (Application.builder().token(bot_token).persistence(persistence).build())
     application.add_error_handler(error_handler)
     
     conv_handler = ConversationHandler(
