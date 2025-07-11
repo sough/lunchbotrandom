@@ -14,7 +14,7 @@ from telegram.ext import (
 # --- Setup & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 2.0
+DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
 
 # --- Helper & API Functions ---
@@ -40,6 +40,9 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
             else: break
         except requests.RequestException: break
     if all_places:
+        found_places_names = [place.get('name', 'N/A') for place in all_places]
+        logger.info(f"Found {len(found_places_names)} places: {found_places_names}")
+    
         place_choice = random.choice(all_places)
         return {"name": place_choice.get("name", "Н/Д"), "address": place_choice.get("address_name", "Н/Д"), "url": place_choice.get("url", "")}
     return None
