@@ -6,7 +6,7 @@ import requests
 import json
 import traceback
 import math
-import urllib.parse # <-- НОВЫЙ ИМПОРТ
+import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -60,7 +60,7 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
         point_info = place_choice.get('point_info', {}); point_coords = point_info.get('point', {})
         return {
             "name": place_choice.get("name", "N/A"), 
-            "address": place_choice.get("address_name", "N/A"), 
+            "address": place_choice.get("address_name", ""), # Return empty string if no address
             "url": place_choice.get("url", ""),
             "lat": point_coords.get('lat'), "lon": point_coords.get('lon')
         }
@@ -71,7 +71,7 @@ def create_result_keyboard() -> InlineKeyboardMarkup:
 
 # --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 async def perform_search_and_reply(update: Update, context: CallbackContext, coords: tuple, is_new_search: bool = False):
-    """Выполняет поиск и отправляет результат, генерируя URL, если он отсутствует."""
+    """Выполняет поиск и отправляет результат, проверяя наличие адреса."""
     if update.callback_query:
         await update.callback_query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
     
@@ -87,23 +87,27 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
         
     title = "🎉 *Выбор сделан\\!* 🎉" if is_new_search else "🎉 *Новый вариант\\!* 🎉"
     name = escape_markdown_v2(place.get('name', ''))
-    address = escape_markdown_v2(place.get('address', ''))
-    message_text = f"{title}\n\n📍 *Название:* {name}\n🏠 *Адрес:* {address}\n"
+    address = escape_markdown_v2(place.get('address', '')) # Get address from place dict
+
+    # Начинаем формировать сообщение
+    message_text = f"{title}\n\n📍 *Название:* {name}\n"
+
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Добавляем строку с адресом, только если он не пустой
+    if address:
+        message_text += f"🏠 *Адрес:* {address}\n"
     
     place_coords = (place.get('lat'), place.get('lon'))
     if all(place_coords):
         distance_m = get_straight_line_distance(start_coords=coords, end_coords=place_coords)
         message_text += f"📏 *Расстояние:* примерно {distance_m} м по прямой\n"
 
-    # --- ЛОГИКА ГЕНЕРАЦИИ URL ---
     place_url = place.get('url')
     if place_url:
-        # Если есть прямая ссылка, используем ее
         url_to_send = place_url
     else:
-        # Иначе генерируем поисковую ссылку
         place_name_encoded = urllib.parse.quote_plus(place.get('name', ''))
-        city_name = context.user_data.get('city', 'almaty').lower() # Берем город пользователя или 'almaty' по умолчанию
+        city_name = context.user_data.get('city', 'almaty').lower()
         url_to_send = f"https://2gis.kz/{city_name}/search/{place_name_encoded}"
 
     message_text += f"\n[Посмотреть на карте 2GIS]({url_to_send})"
