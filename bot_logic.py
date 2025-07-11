@@ -167,7 +167,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
 def setup_application(persistence: PicklePersistence) -> Application:
-    """Настраивает и возвращает объект Application."""
+    """Настраивает и возвращает объект Application с исправленной логикой обработчиков."""
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     
     application = (
@@ -177,18 +177,31 @@ def setup_application(persistence: PicklePersistence) -> Application:
         .build()
     )
 
-    # ... настройка обработчиков ...
+    # ConversationHandler теперь отвечает ТОЛЬКО за диалог смены радиуса.
+    # Точкой входа является ТОЛЬКО команда /radius.
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('radius', radius_start), CallbackQueryHandler(button_handler, pattern='^change_radius$')],
-        states={ASKING_RADIUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, radius_receive)]},
+        entry_points=[CommandHandler('radius', radius_start)],
+        states={
+            ASKING_RADIUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, radius_receive)],
+        },
         fallbacks=[CommandHandler('cancel', cancel)],
-        per_message=False, persistent=True, name="radius_conversation"
+        per_message=False,
+        persistent=True,
+        name="radius_conversation"
     )
+
     application.add_handler(conv_handler)
+    
+    # Основные команды и сообщения
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern='^repeat_search$'))
+    
+    # Все нажатия на кнопки обрабатываются одним независимым CallbackQueryHandler.
+    # Это устраняет предупреждение и делает код чище.
+    application.add_handler(CallbackQueryHandler(button_handler))
+
+    # Обработчик для кнопки из ежедневного напоминания
     application.add_handler(CallbackQueryHandler(start_daily_search_handler, pattern='^start_daily_search$'))
     
     return application
