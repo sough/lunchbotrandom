@@ -10,7 +10,6 @@ from telegram.ext import PicklePersistence
 from bot_logic import setup_application
 
 # --- Настройка логирования, чтобы видеть вывод в Vercel ---
-# Это важно для отладки!
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -23,9 +22,23 @@ app = Flask(__name__)
 # Vercel предоставляет временную файловую систему в /tmp
 persistence = PicklePersistence(filepath="/tmp/bot_persistence")
 
-logger.info("Инициализация приложения Telegram...")
+logger.info("Создание объекта приложения Telegram...")
 application = setup_application(persistence)
-logger.info("Приложение Telegram успешно инициализировано.")
+
+# --- НОВЫЙ БЛОК АСИНХРОННОЙ ИНИЦИАЛИЗАЦИИ ---
+# Эта функция будет выполнена один раз при "холодном старте" serverless-функции
+async def initialize_bot():
+    """Выполняет асинхронную инициализацию бота."""
+    # Загружаем данные из файла persistence (включая задачи из JobQueue)
+    await application.initialize()
+    # Запускаем JobQueue в фоновом режиме. Это НЕ блокирует выполнение.
+    # Это необходимо, чтобы планировщик работал в среде с веб-хуками.
+    if application.job_queue:
+        application.job_queue.start()
+    logger.info("Приложение Telegram успешно инициализировано, JobQueue запущен.")
+
+# Запускаем инициализацию. asyncio.run() можно вызывать на верхнем уровне модуля.
+asyncio.run(initialize_bot())
 
 @app.route('/', defaults={'path': ''}, methods=['POST'])
 @app.route('/<path:path>', methods=['POST'])
@@ -34,27 +47,23 @@ def webhook(path):
     logger.info("Получен входящий POST-запрос от Telegram.")
     
     try:
-        # Получаем данные из тела запроса
-        update_data = request.get_json(force=True)
-        
-        # Преобразуем JSON в объект Update
-        update = Update.de_json(update_data, application.bot)
-        logger.info(f"Десериализовано обновление: update_id={update.update_id}")
-
-        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
-        # Вместо помещения в очередь, напрямую обрабатываем обновление.
-        # Это более надежный метод для serverless-окружения.
         # Запускаем асинхронную обработку в синхронном контексте Flask.
-        asyncio.run(application.process_update(update))
-        
-        logger.info("Обработка обновления успешно завершена.")
+        asyncio.run(process_update_async(request))
         return 'ok'
 
     except Exception as e:
-        # Логируем любую ошибку, которая произошла во время обработки
         logger.error(f"Произошла ошибка при обработке обновления: {e}", exc_info=True)
-        # Возвращаем 'ok', чтобы Telegram не пытался отправить обновление повторно
         return 'ok'
+
+async def process_update_async(flask_request):
+    """Асинхронно обрабатывает обновление."""
+    update_data = flask_request.get_json(force=True)
+    update = Update.de_json(update_data, application.bot)
+    logger.info(f"Десериализовано обновление: update_id={update.update_id}")
+    
+    # Напрямую обрабатываем обновление
+    await application.process_update(update)
+    logger.info("Обработка обновления успешно завершена.")
 
 @app.route('/', defaults={'path': ''}, methods=['GET'])
 @app.route('/<path:path>', methods=['GET'])
