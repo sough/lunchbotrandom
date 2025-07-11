@@ -13,13 +13,11 @@ from telegram.ext import (
     CallbackContext, CallbackQueryHandler, ConversationHandler
 )
 
-# --- Настройки и константы ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
 
-# --- Вспомогательные и API функции ---
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 
@@ -69,7 +67,6 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
 def create_result_keyboard() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]]; return InlineKeyboardMarkup(keyboard)
 
-# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 async def perform_search_and_reply(update: Update, context: CallbackContext, coords: tuple, is_new_search: bool = False):
     """Выполняет поиск и отправляет результат, проверяя наличие адреса."""
     if update.callback_query:
@@ -92,7 +89,6 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     # Начинаем формировать сообщение
     message_text = f"{title}\n\n📍 *Название:* {name}\n"
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
     # Добавляем строку с адресом, только если он не пустой
     if address:
         message_text += f"🏠 *Адрес:* {address}\n"
@@ -116,20 +112,22 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     if update.callback_query: await update.callback_query.edit_message_text(text=message_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
     elif update.message: await update.message.reply_markdown_v2(message_text, reply_markup=reply_markup)
 
-# ... (Остальная часть файла без изменений) ...
 async def error_handler(update: object, context: CallbackContext) -> None:
     logger.error("Произошло исключение при обработке обновления:", exc_info=context.error); tb_list = traceback.format_exception(None, context.error, context.error.__traceback__); tb_string = "".join(tb_list)
     update_dict = update.to_dict() if isinstance(update, Update) else str(update); update_str = json.dumps(update_dict, indent=2, ensure_ascii=False)
     message = (f"--- Начало информации об ошибке ---\nUpdate: {update_str}\n\nUser Data: {context.user_data}\n\nTraceback:\n{tb_string}--- Конец информации об ошибке ---"); logger.error(message)
+
 async def start(update: Update, context: CallbackContext) -> None:
     user = update.effective_user; current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
     start_message = (f"Привет, {user.mention_html()}!\n\nЯ помогу тебе выбрать, где пообедать.\n"
                      f"Текущий радиус поиска: <b>{current_radius} км</b>. Чтобы его изменить, используй команду /radius.\n\n"
                      "Для начала, пожалуйста, напиши мне свой город.")
     await update.message.reply_html(start_message)
+
 async def set_city(update: Update, context: CallbackContext) -> None:
     context.user_data.pop('city', None); context.user_data.pop('last_coords', None)
     await update.message.reply_text("Хорошо, давайте сменим город. Какой теперь выберем?")
+
 async def handle_message(update: Update, context: CallbackContext) -> None:
     user_text = update.message.text
     if 'city' not in context.user_data:
@@ -146,6 +144,7 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
     context.user_data['last_coords'] = coords
     await perform_search_and_reply(update, context, coords, is_new_search=True)
+
 async def button_handler(update: Update, context: CallbackContext) -> int:
     query = update.callback_query; await query.answer()
     if query.data == "repeat_search":
@@ -157,8 +156,10 @@ async def button_handler(update: Update, context: CallbackContext) -> int:
         current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
         await query.message.reply_text(f"Текущий радиус поиска: {current_radius} км.\nОтправьте новое значение в километрах (например, 0.5 или 3).\n\nЧтобы отменить, введите /cancel.")
         return ASKING_RADIUS
+
 async def radius_start(update: Update, context: CallbackContext) -> int:
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM); await update.message.reply_text(f"Текущий радиус поиска: {current_radius} км.\nОтправьте новое значение в километрах (например, 0.5 или 3).\n\nЧтобы отменить, введите /cancel."); return ASKING_RADIUS
+
 async def radius_receive(update: Update, context: CallbackContext) -> int:
     user_text = update.message.text.replace(',', '.');
     try:
@@ -174,8 +175,10 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
     except ValueError:
         await update.message.reply_text("Это не похоже на число. Пожалуйста, введите корректное значение (от 0.1 до 10)."); return ASKING_RADIUS
     return ConversationHandler.END
+
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
+
 def add_handlers(application: Application):
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('radius', radius_start)],
