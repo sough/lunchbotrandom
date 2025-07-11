@@ -20,7 +20,7 @@ from timezonefinder import TimezoneFinder
 # --- Настройки и константы ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 2.0
+DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
 
 # ... (all other functions from escape_markdown_v2 to cancel remain the same) ...
