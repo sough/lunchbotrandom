@@ -2,51 +2,56 @@
 import os
 import asyncio
 import logging
-import nest_asyncio
-from flask import Flask, request
+from fastapi import FastAPI, Request, Response
+
 from telegram import Update
 from telegram.ext import PicklePersistence
 
 from bot_logic import setup_application
 
 # --- Настройка ---
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-app = Flask(__name__)
+
+# Используем FastAPI вместо Flask
+app = FastAPI()
+
 persistence = PicklePersistence(filepath="/tmp/bot_persistence")
-
-logger.info("Создание объекта приложения Telegram...")
 application = setup_application(persistence)
-logger.info("Приложение Telegram создано.")
 
-nest_asyncio.apply()
-logger.info("nest_asyncio применен.")
-
-async def initialize_bot():
-    """Выполняет обязательную асинхронную инициализацию бота."""
+@app.on_event("startup")
+async def startup_event():
+    """Выполняет инициализацию бота при старте FastAPI."""
+    logger.info("Запускаю инициализацию бота...")
     await application.initialize()
-    # Строка application.job_queue.start() удалена
-    logger.info("Приложение Telegram успешно инициализировано.")
+    # Сразу регистрируем веб-хук при старте, если его нет
+    # VERCEL_URL будет доступна как переменная окружения на Vercel
+    webhook_url = os.getenv("VERCEL_URL")
+    if webhook_url:
+        await application.bot.set_webhook(f"https://{webhook_url}/api")
+    logger.info("Бот успешно инициализирован.")
 
-logger.info("Запускаю одноразовую инициализацию бота...")
-asyncio.run(initialize_bot())
-logger.info("Одноразовая инициализация бота завершена.")
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Корректно останавливает бота при остановке FastAPI."""
+    logger.info("Останавливаю бота...")
+    await application.shutdown()
+    logger.info("Бот остановлен.")
 
-@app.route('/', defaults={'path': ''}, methods=['POST'])
-@app.route('/<path:path>', methods=['POST'])
-def webhook(path):
+@app.post("/api")
+async def telegram_webhook(request: Request):
+    """Принимает обновления от Telegram."""
     try:
-        asyncio.run(process_update_async(request))
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        logger.info(f"Получено обновление: update_id={update.update_id}")
+        await application.process_update(update)
     except Exception as e:
-        logger.error(f"Произошла ошибка при обработке обновления: {e}", exc_info=True)
-    return 'ok'
+        logger.error(f"Ошибка обработки обновления: {e}", exc_info=True)
+    
+    return Response(status_code=200)
 
-async def process_update_async(flask_request):
-    update_data = flask_request.get_json(force=True)
-    update = Update.de_json(update_data, application.bot)
-    await application.process_update(update)
-
-@app.route('/', defaults={'path': ''}, methods=['GET'])
-@app.route('/<path:path>', methods=['GET'])
-def health_check(path):
-    return 'ok'
+@app.get("/")
+def health_check():
+    """Проверка, что сервис жив."""
+    return {"status": "ok"}
