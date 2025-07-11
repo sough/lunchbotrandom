@@ -14,7 +14,7 @@ from telegram.ext import (
 # --- Setup & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 2.0
+DEFAULT_RADIUS_KM = 2
 ASKING_RADIUS = 1
 
 # --- Helper & API Functions ---
@@ -33,7 +33,7 @@ async def get_coordinates(address: str) -> tuple | None:
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
     for page_num in range(1, 11):
-        url = "https://catalog.api.2gis.com/3.0/items"; params = {'key': os.getenv("DGIS_API_KEY"), 'q': "кафе, ресторан, столовая, спорт-бар, бар, кафе быстрого питания, ресторанный комплекс, лаундж-бар, суши-бар", 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url', 'page_size': 10, 'page': page_num}
+        url = "https://catalog.api.2gis.com/3.0/items"; params = {'key': os.getenv("DGIS_API_KEY"), 'q': "кафе, ресторан, столовая", 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url', 'page_size': 10, 'page': page_num}
         try:
             response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
             if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"): all_places.extend(data["result"]["items"])
