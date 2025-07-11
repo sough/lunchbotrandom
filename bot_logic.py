@@ -1,27 +1,17 @@
-import logging
-import os
-import random
-import requests
-import asyncio
+# bot_logic.py
+import logging, os, random, requests, asyncio
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    CallbackContext,
-    CallbackQueryHandler,
-    ConversationHandler,
-    PicklePersistence,
+    Application, CommandHandler, MessageHandler, filters,
+    CallbackContext, CallbackQueryHandler, ConversationHandler, PicklePersistence
 )
 from timezonefinder import TimezoneFinder
 
 # --- Настройки и константы ---
-load_dotenv()
+# load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -176,30 +166,23 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
-# --- ФИНАЛЬНАЯ ВЕРСИЯ MAIN ---
-def main() -> None:
-    """Запускает бота и настраивает его для корректной работы и остановки."""
-    if not TELEGRAM_TOKEN or not DGIS_API_KEY:
-        logger.critical("Необходимые API ключи не найдены.")
-        return
-
-    persistence = PicklePersistence(filepath="bot_persistence")
-
+def setup_application(persistence: PicklePersistence) -> Application:
+    """Настраивает и возвращает объект Application."""
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    
     application = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
         .persistence(persistence)
         .build()
     )
-    
+
     # ... настройка обработчиков ...
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('radius', radius_start), CallbackQueryHandler(button_handler, pattern='^change_radius$')],
         states={ASKING_RADIUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, radius_receive)]},
         fallbacks=[CommandHandler('cancel', cancel)],
-        per_message=False,
-        persistent=True,
-        name="radius_conversation"
+        per_message=False, persistent=True, name="radius_conversation"
     )
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("start", start))
@@ -208,12 +191,4 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler, pattern='^repeat_search$'))
     application.add_handler(CallbackQueryHandler(start_daily_search_handler, pattern='^start_daily_search$'))
     
-    # Запускаем бота. Этот метод блокирующий, он сам обрабатывает запуск,
-    # работу и корректную остановку по Ctrl+C.
-    logger.info("Бот запущен...")
-    application.run_polling()
-    logger.info("Бот остановлен.")
-
-
-if __name__ == '__main__':
-    main()
+    return application
