@@ -6,12 +6,11 @@ import requests
 import asyncio
 import traceback
 import html
-import json
+import json # <-- ADD THIS IMPORT
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     CallbackContext, CallbackQueryHandler, ConversationHandler, PicklePersistence
@@ -19,14 +18,12 @@ from telegram.ext import (
 from timezonefinder import TimezoneFinder
 
 # --- Настройки и константы ---
-# ... (остальные константы без изменений)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-DEFAULT_RADIUS_KM = 1.0
+DEFAULT_RADIUS_KM = 2.0
 ASKING_RADIUS = 1
 
-# ... (все ваши функции от escape_markdown_v2 до cancel остаются БЕЗ ИЗМЕНЕНИЙ) ...
-# ... (просто для полноты файла, можно не копировать, если не меняли)
+# ... (all other functions from escape_markdown_v2 to cancel remain the same) ...
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 async def get_coordinates_and_timezone(address: str) -> tuple | None:
@@ -149,18 +146,19 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
-### --- НОВАЯ ФУНКЦИЯ-ОБРАБОТЧИК ОШИБОК ---
+### --- ИЗМЕНЕННАЯ ФУНКЦИЯ-ОБРАБОТЧИК ОШИБОК ---
 async def error_handler(update: object, context: CallbackContext) -> None:
     """Логирует ошибки, вызванные обновлениями."""
     logger.error("Exception while handling an update:", exc_info=context.error)
 
-    # Для отладки можно собрать больше информации
     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
     tb_string = "".join(tb_list)
 
-    update_str = update.to_json(indent=2) if isinstance(update, Update) else str(update)
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Преобразуем update в словарь, а затем в красиво отформатированную строку JSON
+    update_dict = update.to_dict() if isinstance(update, Update) else str(update)
+    update_str = json.dumps(update_dict, indent=2, ensure_ascii=False)
     
-    # Формируем сообщение для лога
     message = (
         f"An exception was raised while handling an update\n"
         f"<pre>update = {html.escape(update_str)}</pre>\n\n"
@@ -169,18 +167,11 @@ async def error_handler(update: object, context: CallbackContext) -> None:
         f"<pre>{html.escape(tb_string)}</pre>"
     )
     
-    # Можно раскомментировать, чтобы отправлять сообщение об ошибке пользователю
-    # if isinstance(update, Update) and update.effective_message:
-    #     await update.effective_message.reply_text(
-    #         "Произошла внутренняя ошибка. Я уже сообщил разработчикам!"
-    #     )
-
-    # Мы просто логируем ошибку, но можно настроить отправку в отдельный чат
     logger.error(f"Полная информация об ошибке: \n{message}")
 
 
 def setup_application(persistence: PicklePersistence) -> Application:
-    """Настраивает и возвращает объект Application с исправленной логикой обработчиков."""
+    """Настраивает и возвращает объект Application."""
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     
     application = (
@@ -190,8 +181,6 @@ def setup_application(persistence: PicklePersistence) -> Application:
         .build()
     )
 
-    ### --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Регистрируем наш новый обработчик ошибок
     application.add_error_handler(error_handler)
 
     conv_handler = ConversationHandler(
@@ -206,8 +195,6 @@ def setup_application(persistence: PicklePersistence) -> Application:
     )
 
     application.add_handler(conv_handler)
-    
-    # Основные команды и сообщения
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
