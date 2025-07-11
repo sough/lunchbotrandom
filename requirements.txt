@@ -3,4 +3,3 @@ requests
 python-dotenv
 fastapi
 uvicorn
-nest-asyncio
