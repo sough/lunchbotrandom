@@ -5,20 +5,21 @@ import random
 import requests
 import json
 import traceback
-import math # Added for distance calculation
+import math
+import urllib.parse # <-- НОВЫЙ ИМПОРТ
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     CallbackContext, CallbackQueryHandler, ConversationHandler
 )
 
-# --- Setup & Constants ---
+# --- Настройки и константы ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_KM = 1.0
 ASKING_RADIUS = 1
 
-# --- Helper & API Functions ---
+# --- Вспомогательные и API функции ---
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 
@@ -31,26 +32,15 @@ async def get_coordinates(address: str) -> tuple | None:
         else: logger.warning(f"2GIS API не нашел координат для адреса '{address}'."); return None
     except requests.RequestException as e: logger.error(f"Ошибка сети при запросе к 2GIS Geocode API: {e}"); return None
 
-# --- NEW FUNCTION ---
 def get_straight_line_distance(start_coords: tuple, end_coords: tuple) -> int:
-    """Calculates the straight-line distance between two points in meters."""
-    R = 6371e3  # Earth radius in meters
-    lat1, lon1 = start_coords
-    lat2, lon2 = end_coords
-
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-
-    a = math.sin(delta_phi / 2) * math.sin(delta_phi / 2) + \
-        math.cos(phi1) * math.cos(phi2) * \
-        math.sin(delta_lambda / 2) * math.sin(delta_lambda / 2)
+    R = 6371e3
+    lat1, lon1 = start_coords; lat2, lon2 = end_coords
+    phi1 = math.radians(lat1); phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1); delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2) * math.sin(delta_phi / 2) + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) * math.sin(delta_lambda / 2)
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
     distance = R * c
     return int(distance)
-
 
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
@@ -59,36 +49,29 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
         url = "https://catalog.api.2gis.com/3.0/items"
         try:
             response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
-            if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
-                all_places.extend(data["result"]["items"])
-            else:
-                continue
-        except requests.RequestException:
-            break
+            if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"): all_places.extend(data["result"]["items"])
+            else: break
+        except requests.RequestException: break
     
     if all_places:
         found_places_names = [place.get('name', 'N/A') for place in all_places]
         logger.info(f"Found {len(found_places_names)} places: {found_places_names}")
         place_choice = random.choice(all_places)
-        
-        point_info = place_choice.get('point_info', {})
-        point_coords = point_info.get('point', {})
-        
+        point_info = place_choice.get('point_info', {}); point_coords = point_info.get('point', {})
         return {
             "name": place_choice.get("name", "N/A"), 
             "address": place_choice.get("address_name", "N/A"), 
             "url": place_choice.get("url", ""),
-            "lat": point_coords.get('lat'),
-            "lon": point_coords.get('lon')
+            "lat": point_coords.get('lat'), "lon": point_coords.get('lon')
         }
     return None
 
 def create_result_keyboard() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]]; return InlineKeyboardMarkup(keyboard)
 
-# --- MODIFIED FUNCTION ---
+# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 async def perform_search_and_reply(update: Update, context: CallbackContext, coords: tuple, is_new_search: bool = False):
-    """Performs search and sends the result with straight-line distance."""
+    """Выполняет поиск и отправляет результат, генерируя URL, если он отсутствует."""
     if update.callback_query:
         await update.callback_query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
     
@@ -97,29 +80,39 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     place = await get_random_lunch_place(coords[0], coords[1], radius_meters)
     
     if not place:
-        message_text = f"К сожалению, я не нашел заведений в радиусе {radius_km} км.";
+        message_text = f"К сожалению, я не нашел заведений в радиусе {radius_km} км."
         if update.callback_query: await update.callback_query.edit_message_text(text=message_text)
         elif update.message: await update.message.reply_text(text=message_text)
         return
         
     title = "🎉 *Выбор сделан\\!* 🎉" if is_new_search else "🎉 *Новый вариант\\!* 🎉"
-    name = escape_markdown_v2(place['name'])
-    address = escape_markdown_v2(place['address'])
+    name = escape_markdown_v2(place.get('name', ''))
+    address = escape_markdown_v2(place.get('address_name', ''))
     message_text = f"{title}\n\n📍 *Название:* {name}\n🏠 *Адрес:* {address}\n"
     
-    # Calculate and add straight-line distance
     place_coords = (place.get('lat'), place.get('lon'))
     if all(place_coords):
         distance_m = get_straight_line_distance(start_coords=coords, end_coords=place_coords)
         message_text += f"📏 *Расстояние:* примерно {distance_m} м по прямой\n"
 
-    message_text += f"\n[Посмотреть на карте 2GIS]({place.get('url')})"
+    # --- ЛОГИКА ГЕНЕРАЦИИ URL ---
+    place_url = place.get('url')
+    if place_url:
+        # Если есть прямая ссылка, используем ее
+        url_to_send = place_url
+    else:
+        # Иначе генерируем поисковую ссылку
+        place_name_encoded = urllib.parse.quote_plus(place.get('name', ''))
+        city_name = context.user_data.get('city', 'almaty').lower() # Берем город пользователя или 'almaty' по умолчанию
+        url_to_send = f"https://2gis.kz/{city_name}/search/{place_name_encoded}"
+
+    message_text += f"\n[Посмотреть на карте 2GIS]({url_to_send})"
     
     reply_markup = create_result_keyboard()
     if update.callback_query: await update.callback_query.edit_message_text(text=message_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
     elif update.message: await update.message.reply_markdown_v2(message_text, reply_markup=reply_markup)
 
-# ... (The rest of the file: error_handler, start, set_city, etc. remains unchanged) ...
+# ... (Остальная часть файла без изменений) ...
 async def error_handler(update: object, context: CallbackContext) -> None:
     logger.error("Произошло исключение при обработке обновления:", exc_info=context.error); tb_list = traceback.format_exception(None, context.error, context.error.__traceback__); tb_string = "".join(tb_list)
     update_dict = update.to_dict() if isinstance(update, Update) else str(update); update_str = json.dumps(update_dict, indent=2, ensure_ascii=False)
