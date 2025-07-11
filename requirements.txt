@@ -1,5 +1,3 @@
 python-telegram-bot[persistence]
 requests
 python-dotenv
-fastapi
-uvicorn
