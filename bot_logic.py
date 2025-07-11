@@ -146,28 +146,29 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
-### --- ИЗМЕНЕННАЯ ФУНКЦИЯ-ОБРАБОТЧИК ОШИБОК ---
 async def error_handler(update: object, context: CallbackContext) -> None:
-    """Логирует ошибки, вызванные обновлениями."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    """Логирует ошибки, вызванные обновлениями, в читаемом формате."""
+    logger.error("Произошло исключение при обработке обновления:", exc_info=context.error)
 
+    # Собираем traceback ошибки
     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
     tb_string = "".join(tb_list)
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Преобразуем update в словарь, а затем в красиво отформатированную строку JSON
-    update_dict = update.to_dict() if isinstance(update, Update) else str(update)
-    update_str = json.dumps(update_dict, indent=2, ensure_ascii=False)
+    # Собираем информацию о пользователе и чате
+    update_str = update.to_json() if isinstance(update, Update) else str(update)
     
+    # Формируем простое и понятное многострочное сообщение для лога
+    # Мы не используем html.escape, чтобы сохранить переносы строк и отступы
     message = (
-        f"An exception was raised while handling an update\n"
-        f"<pre>update = {html.escape(update_str)}</pre>\n\n"
-        f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-        f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
-        f"<pre>{html.escape(tb_string)}</pre>"
+        f"--- Начало информации об ошибке ---\n"
+        f"Update: {json.dumps(json.loads(update_str), indent=2, ensure_ascii=False)}\n\n"
+        f"User Data: {context.user_data}\n\n"
+        f"Traceback:\n{tb_string}"
+        f"--- Конец информации об ошибке ---"
     )
-    
-    logger.error(f"Полная информация об ошибке: \n{message}")
+
+    # Логируем как одну большую запись
+    logger.error(message)
 
 
 def setup_application(persistence: PicklePersistence) -> Application:
