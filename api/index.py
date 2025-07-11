@@ -2,15 +2,19 @@
 import os
 import asyncio
 import logging
-import nest_asyncio  # <-- ШАГ 1: Импортируем библиотеку
+import nest_asyncio  # Импортируем библиотеку
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import PicklePersistence
 
+# Импортируем нашу логику
 from bot_logic import setup_application
 
 # --- Настройка ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -20,10 +24,26 @@ logger.info("Создание объекта приложения Telegram...")
 application = setup_application(persistence)
 logger.info("Приложение Telegram создано.")
 
-# --- ШАГ 2: Применяем патч к asyncio ---
-# Это нужно сделать один раз при старте.
+# --- КЛЮЧЕВЫЕ ИСПРАВЛЕНИЯ ---
+
+# 1. Применяем патч к asyncio, чтобы разрешить вложенные циклы событий.
 nest_asyncio.apply()
 logger.info("nest_asyncio применен.")
+
+# 2. Определяем и запускаем асинхронную инициализацию ОДИН РАЗ при старте.
+async def initialize_bot():
+    """Выполняет обязательную асинхронную инициализацию бота."""
+    await application.initialize()
+    # Пытаемся запустить JobQueue. Его работа в Vercel не гарантирована, но этот вызов необходим.
+    if application.job_queue:
+        await application.job_queue.start()
+    logger.info("Приложение Telegram успешно инициализировано.")
+
+# 3. Запускаем инициализацию с помощью asyncio.run().
+# Благодаря nest_asyncio, это больше не будет вызывать ошибок "Event loop is closed".
+logger.info("Запускаю одноразовую инициализацию бота...")
+asyncio.run(initialize_bot())
+logger.info("Одноразовая инициализация бота завершена.")
 
 
 @app.route('/', defaults={'path': ''}, methods=['POST'])
@@ -31,10 +51,8 @@ logger.info("nest_asyncio применен.")
 def webhook(path):
     """Главная функция, которая обрабатывает входящие запросы от Telegram."""
     try:
-        # --- ШАГ 3: Теперь мы можем просто использовать asyncio.run ---
-        # nest_asyncio позаботится о том, чтобы цикл не закрылся преждевременно.
+        # Теперь этот вызов безопасен
         asyncio.run(process_update_async(request))
-
     except Exception as e:
         logger.error(f"Произошла ошибка при обработке обновления: {e}", exc_info=True)
         
@@ -45,13 +63,12 @@ async def process_update_async(flask_request):
     """Асинхронно обрабатывает обновление."""
     update_data = flask_request.get_json(force=True)
     update = Update.de_json(update_data, application.bot)
-    
-    # Мы больше не инициализируем бота здесь, т.к. persistence не работает
-    # в serverless так, как мы ожидаем. Просто обрабатываем.
     await application.process_update(update)
+
 
 # GET-запрос для проверки работоспособности
 @app.route('/', defaults={'path': ''}, methods=['GET'])
 @app.route('/<path:path>', methods=['GET'])
 def health_check(path):
+    """Проверка, что сервис жив."""
     return 'ok'
