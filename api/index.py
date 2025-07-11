@@ -52,7 +52,7 @@ async def initialize_bot():
             await application.initialize()
             
             # Set the webhook to let Telegram know where to send updates
-            webhook_url = os.getenv("VERCEL_URL")
+            webhook_url = os.getenv("VERCEL_CUSTOM_URL")
             secret_token = os.getenv("TELEGRAM_SECRET_TOKEN")
             if webhook_url:
                 full_webhook_url = f"https://{webhook_url}/api"
