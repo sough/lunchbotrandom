@@ -9,7 +9,7 @@ from telegram.ext import PicklePersistence
 # Импортируем нашу логику
 from bot_logic import setup_application
 
-# --- Настройка логирования, чтобы видеть вывод в Vercel ---
+# --- Настройка логирования ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -18,27 +18,20 @@ logger = logging.getLogger(__name__)
 
 # --- Инициализация ---
 app = Flask(__name__)
-
-# Vercel предоставляет временную файловую систему в /tmp
 persistence = PicklePersistence(filepath="/tmp/bot_persistence")
-
 logger.info("Создание объекта приложения Telegram...")
 application = setup_application(persistence)
 
-# --- НОВЫЙ БЛОК АСИНХРОННОЙ ИНИЦИАЛИЗАЦИИ ---
-# Эта функция будет выполнена один раз при "холодном старте" serverless-функции
 async def initialize_bot():
     """Выполняет асинхронную инициализацию бота."""
-    # Загружаем данные из файла persistence (включая задачи из JobQueue)
     await application.initialize()
-    # Запускаем JobQueue в фоновом режиме. Это НЕ блокирует выполнение.
-    # Это необходимо, чтобы планировщик работал в среде с веб-хуками.
     if application.job_queue:
         application.job_queue.start()
     logger.info("Приложение Telegram успешно инициализировано, JobQueue запущен.")
 
-# Запускаем инициализацию. asyncio.run() можно вызывать на верхнем уровне модуля.
+# Запускаем инициализацию один раз при холодном старте
 asyncio.run(initialize_bot())
+
 
 @app.route('/', defaults={'path': ''}, methods=['POST'])
 @app.route('/<path:path>', methods=['POST'])
@@ -47,13 +40,24 @@ def webhook(path):
     logger.info("Получен входящий POST-запрос от Telegram.")
     
     try:
-        # Запускаем асинхронную обработку в синхронном контексте Flask.
-        asyncio.run(process_update_async(request))
+        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
+        # Вместо asyncio.run(), мы получаем или создаем цикл событий вручную.
+        # Это более стабильный подход для интеграции с синхронными фреймворками.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Запускаем нашу асинхронную задачу в этом цикле
+        loop.run_until_complete(process_update_async(request))
+        
         return 'ok'
 
     except Exception as e:
         logger.error(f"Произошла ошибка при обработке обновления: {e}", exc_info=True)
         return 'ok'
+
 
 async def process_update_async(flask_request):
     """Асинхронно обрабатывает обновление."""
@@ -61,9 +65,9 @@ async def process_update_async(flask_request):
     update = Update.de_json(update_data, application.bot)
     logger.info(f"Десериализовано обновление: update_id={update.update_id}")
     
-    # Напрямую обрабатываем обновление
     await application.process_update(update)
     logger.info("Обработка обновления успешно завершена.")
+
 
 @app.route('/', defaults={'path': ''}, methods=['GET'])
 @app.route('/<path:path>', methods=['GET'])
