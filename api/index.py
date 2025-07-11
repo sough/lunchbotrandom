@@ -2,7 +2,7 @@
 import os
 import asyncio
 import logging
-import nest_asyncio  # Импортируем библиотеку
+import nest_asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import PicklePersistence
@@ -24,7 +24,6 @@ logger.info("Создание объекта приложения Telegram...")
 application = setup_application(persistence)
 logger.info("Приложение Telegram создано.")
 
-# --- КЛЮЧЕВЫЕ ИСПРАВЛЕНИЯ ---
 
 # 1. Применяем патч к asyncio, чтобы разрешить вложенные циклы событий.
 nest_asyncio.apply()

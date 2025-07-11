@@ -6,7 +6,7 @@ import requests
 import asyncio
 import traceback
 import html
-import json # <-- ADD THIS IMPORT
+import json
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
