@@ -41,7 +41,7 @@ async def startup_event():
     await application.initialize()
     
     # Устанавливаем веб-хук
-    webhook_url = os.getenv("VERCEL_URL")
+    webhook_url = os.getenv("VERCEL_CUSTOM_URL")
     secret_token = os.getenv("TELEGRAM_SECRET_TOKEN")
     if webhook_url:
         full_webhook_url = f"https://{webhook_url}/api"
