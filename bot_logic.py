@@ -1,9 +1,17 @@
 # bot_logic.py
-import logging, os, random, requests, asyncio
+import logging
+import os
+import random
+import requests
+import asyncio
+import traceback
+import html
+import json
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     CallbackContext, CallbackQueryHandler, ConversationHandler, PicklePersistence
@@ -11,55 +19,30 @@ from telegram.ext import (
 from timezonefinder import TimezoneFinder
 
 # --- Настройки и константы ---
-# load_dotenv()
+# ... (остальные константы без изменений)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-DGIS_API_KEY = os.getenv("DGIS_API_KEY")
 DEFAULT_RADIUS_KM = 1.0
-SEARCH_KEYWORDS = "кафе, ресторан, столовая"
 ASKING_RADIUS = 1
 
-tf = TimezoneFinder()
-
-# ... (все функции от escape_markdown_v2 до cancel остаются БЕЗ ИЗМЕНЕНИЙ) ...
+# ... (все ваши функции от escape_markdown_v2 до cancel остаются БЕЗ ИЗМЕНЕНИЙ) ...
+# ... (просто для полноты файла, можно не копировать, если не меняли)
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 async def get_coordinates_and_timezone(address: str) -> tuple | None:
-    """Получает координаты и часовой пояс для заданного адреса с логированием ошибок."""
-    url = "https://catalog.api.2gis.com/3.0/items/geocode"
-    params = { "q": address, "key": DGIS_API_KEY, "fields": "items.point" }
+    url = "https://catalog.api.2gis.com/3.0/items/geocode"; params = { "q": address, "key": os.getenv("DGIS_API_KEY"), "fields": "items.point" }
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()  # Проверяем на HTTP-ошибки типа 4xx/5xx
-        data = response.json()
-        
-        # Успешный ответ от API, но без результатов
+        response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
         if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
-            point = data["result"]["items"][0]["point"]
-            lat, lon = point['lat'], point['lon']
-            
-            timezone_str = tf.timezone_at(lng=lon, lat=lat)
-            if not timezone_str:
-                logger.warning(f"Найдены координаты для '{address}', но не удалось определить часовой пояс.")
-                return lat, lon, None
-                
+            point = data["result"]["items"][0]["point"]; lat, lon = point['lat'], point['lon']; timezone_str = TimezoneFinder().timezone_at(lng=lon, lat=lat)
+            if not timezone_str: logger.warning(f"Найдены координаты для '{address}', но не удалось определить часовой пояс."); return lat, lon, None
             return lat, lon, timezone_str
-        else:
-            # --- ЛОГ ПРИ НЕУДАЧНОМ ПОИСКЕ ---
-            logger.warning(f"2GIS API не нашел координат для адреса '{address}'. Ответ: {data}")
-            return None
-            
-    except requests.RequestException as e:
-        # --- ЛОГ ПРИ ОШИБКЕ СЕТИ ---
-        logger.error(f"Ошибка сети при запросе к 2GIS Geocode API для адреса '{address}': {e}")
-        return None
-    
+        else: logger.warning(f"2GIS API не нашел координат для адреса '{address}'. Ответ: {data}"); return None
+    except requests.RequestException as e: logger.error(f"Ошибка сети при запросе к 2GIS Geocode API для адреса '{address}': {e}"); return None
 async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict | None:
     all_places = []
     for page_num in range(1, 11):
-        url = "https://catalog.api.2gis.com/3.0/items"; params = {'key': DGIS_API_KEY, 'q': SEARCH_KEYWORDS, 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url', 'page_size': 10, 'page': page_num}
+        url = "https://catalog.api.2gis.com/3.0/items"; params = {'key': os.getenv("DGIS_API_KEY"), 'q': "кафе, ресторан, столовая", 'point': f'{lon},{lat}', 'radius': radius_meters, 'type': 'branch', 'fields': 'items.name,items.address_name,items.url', 'page_size': 10, 'page': page_num}
         try:
             response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
             if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"): all_places.extend(data["result"]["items"])
@@ -166,6 +149,36 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Действие отменено."); return ConversationHandler.END
 
+### --- НОВАЯ ФУНКЦИЯ-ОБРАБОТЧИК ОШИБОК ---
+async def error_handler(update: object, context: CallbackContext) -> None:
+    """Логирует ошибки, вызванные обновлениями."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    # Для отладки можно собрать больше информации
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+
+    update_str = update.to_json(indent=2) if isinstance(update, Update) else str(update)
+    
+    # Формируем сообщение для лога
+    message = (
+        f"An exception was raised while handling an update\n"
+        f"<pre>update = {html.escape(update_str)}</pre>\n\n"
+        f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
+        f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
+        f"<pre>{html.escape(tb_string)}</pre>"
+    )
+    
+    # Можно раскомментировать, чтобы отправлять сообщение об ошибке пользователю
+    # if isinstance(update, Update) and update.effective_message:
+    #     await update.effective_message.reply_text(
+    #         "Произошла внутренняя ошибка. Я уже сообщил разработчикам!"
+    #     )
+
+    # Мы просто логируем ошибку, но можно настроить отправку в отдельный чат
+    logger.error(f"Полная информация об ошибке: \n{message}")
+
+
 def setup_application(persistence: PicklePersistence) -> Application:
     """Настраивает и возвращает объект Application с исправленной логикой обработчиков."""
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -177,8 +190,10 @@ def setup_application(persistence: PicklePersistence) -> Application:
         .build()
     )
 
-    # ConversationHandler теперь отвечает ТОЛЬКО за диалог смены радиуса.
-    # Точкой входа является ТОЛЬКО команда /radius.
+    ### --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Регистрируем наш новый обработчик ошибок
+    application.add_error_handler(error_handler)
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('radius', radius_start)],
         states={
@@ -196,12 +211,7 @@ def setup_application(persistence: PicklePersistence) -> Application:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Все нажатия на кнопки обрабатываются одним независимым CallbackQueryHandler.
-    # Это устраняет предупреждение и делает код чище.
     application.add_handler(CallbackQueryHandler(button_handler))
-
-    # Обработчик для кнопки из ежедневного напоминания
     application.add_handler(CallbackQueryHandler(start_daily_search_handler, pattern='^start_daily_search$'))
     
     return application
