@@ -62,7 +62,7 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
             if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
                 all_places.extend(data["result"]["items"])
             else:
-                break
+                continue
         except requests.RequestException:
             break
     
