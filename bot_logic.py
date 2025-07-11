@@ -7,14 +7,12 @@ import asyncio
 import traceback
 import json
 from datetime import time
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     CallbackContext, CallbackQueryHandler, ConversationHandler, PicklePersistence
 )
-from timezonefinder import TimezoneFinder
 
 # --- Настройки и константы ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -27,13 +25,12 @@ def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 
 async def get_coordinates_and_timezone(address: str) -> tuple | None:
-    # Эта функция больше не возвращает таймзону, но оставим название для консистентности
     url = "https://catalog.api.2gis.com/3.0/items/geocode"; params = { "q": address, "key": os.getenv("DGIS_API_KEY"), "fields": "items.point" }
     try:
         response = requests.get(url, params=params); response.raise_for_status(); data = response.json()
         if data.get("meta", {}).get("code") == 200 and data.get("result", {}).get("items"):
             point = data["result"]["items"][0]["point"]; lat, lon = point['lat'], point['lon']
-            return lat, lon, None # Возвращаем None вместо таймзоны
+            return lat, lon, None
         else: logger.warning(f"2GIS API не нашел координат для адреса '{address}'. Ответ: {data}"); return None
     except requests.RequestException as e: logger.error(f"Ошибка сети при запросе к 2GIS Geocode API для адреса '{address}': {e}"); return None
 
@@ -55,20 +52,43 @@ async def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> 
 def create_result_keyboard() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]]; return InlineKeyboardMarkup(keyboard)
 
+# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 async def perform_search_and_reply(update: Update, context: CallbackContext, coords: tuple, is_new_search: bool = False):
-    radius_km = context.user_data.get('radius_km', DEFAULT_RADIUS_KM); radius_meters = int(radius_km * 1000)
+    """Выполняет поиск и отправляет/редактирует сообщение с результатом."""
+    # Если это повторный поиск по кнопке, сначала редактируем сообщение
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
+
+    radius_km = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
+    radius_meters = int(radius_km * 1000)
+    
     place = await get_random_lunch_place(coords[0], coords[1], radius_meters)
+    
     if not place:
         message_text = f"К сожалению, я не нашел заведений в радиусе {radius_km} км."
-        if update.callback_query: await update.callback_query.edit_message_text(text=message_text)
-        elif update.message: await update.message.reply_text(text=message_text)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text=message_text)
+        elif update.message:
+            await update.message.reply_text(text=message_text)
         return
-    title = "🎉 *Выбор сделан\\!* 🎉" if is_new_search else "🎉 *Новый вариант\\!* 🎉"; name = escape_markdown_v2(place['name']); address = escape_markdown_v2(place['address'])
+
+    title = "🎉 *Выбор сделан\\!* 🎉" if is_new_search else "🎉 *Новый вариант\\!* 🎉"
+    name = escape_markdown_v2(place['name'])
+    address = escape_markdown_v2(place['address'])
     message_text = f"{title}\n\n📍 *Название:* {name}\n🏠 *Адрес:* {address}\n\n"
-    if place.get('url'): message_text += f"[Посмотреть на карте 2GIS]({place['url']})"
+    if place.get('url'):
+        message_text += f"[Посмотреть на карте 2GIS]({place['url']})"
+    
     reply_markup = create_result_keyboard()
-    if update.callback_query: await update.callback_query.edit_message_text(text=message_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
-    elif update.message: await update.message.reply_markdown_v2(message_text, reply_markup=reply_markup)
+
+    # Вне зависимости от того, новый это поиск или повторный,
+    # если есть callback_query - мы редактируем сообщение, если нет - отвечаем.
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text=message_text, parse_mode='MarkdownV2', reply_markup=reply_markup
+        )
+    elif update.message:
+        await update.message.reply_markdown_v2(message_text, reply_markup=reply_markup)
 
 async def error_handler(update: object, context: CallbackContext) -> None:
     logger.error("Произошло исключение при обработке обновления:", exc_info=context.error)
@@ -116,14 +136,20 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     lat, lon, _ = coords_data; coords = (lat, lon); context.user_data['last_coords'] = coords
     await perform_search_and_reply(update, context, coords, is_new_search=True)
 
+# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 async def button_handler(update: Update, context: CallbackContext) -> int:
     query = update.callback_query; await query.answer()
+
     if query.data == "repeat_search":
         coords = context.user_data.get('last_coords')
-        if not coords: await query.edit_message_text(text="Что-то пошло не так. Пожалуйста, отправьте адрес заново."); return
-        await query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
+        if not coords:
+            await query.edit_message_text(text="Что-то пошло не так. Пожалуйста, отправьте адрес заново.")
+            return
+        
+        # Просто вызываем центральную функцию, она сама напишет "Ищу..."
         await perform_search_and_reply(update, context, coords)
         return
+
     elif query.data == "change_radius":
         current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
         await query.message.reply_text(f"Текущий радиус поиска: {current_radius} км.\nОтправьте новое значение в километрах (например, 0.5 или 3).\n\nЧтобы отменить, введите /cancel.")
@@ -138,9 +164,13 @@ async def radius_receive(update: Update, context: CallbackContext) -> int:
         if not (0.1 <= new_radius <= 10): raise ValueError("Радиус вне допустимого диапазона.")
         context.user_data['radius_km'] = new_radius
         coords = context.user_data.get('last_coords')
-        if coords: await update.message.reply_text(f"Радиус обновлен: {new_radius} км. Автоматически запускаю повторный поиск..."); await perform_search_and_reply(update, context, coords, is_new_search=True)
-        else: await update.message.reply_text(f"Отлично! Новый радиус поиска сохранен: {new_radius} км.")
-    except ValueError: await update.message.reply_text("Это не похоже на число. Пожалуйста, введите корректное значение (от 0.1 до 10)."); return ASKING_RADIUS
+        if coords:
+            await update.message.reply_text(f"Радиус обновлен: {new_radius} км. Автоматически запускаю повторный поиск...")
+            await perform_search_and_reply(update, context, coords, is_new_search=True)
+        else:
+            await update.message.reply_text(f"Отлично! Новый радиус поиска сохранен: {new_radius} км.")
+    except ValueError:
+        await update.message.reply_text("Это не похоже на число. Пожалуйста, введите корректное значение (от 0.1 до 10)."); return ASKING_RADIUS
     return ConversationHandler.END
 
 async def cancel(update: Update, context: CallbackContext) -> int:
@@ -150,13 +180,7 @@ def setup_application(persistence: PicklePersistence) -> Application:
     """Настраивает и возвращает объект Application."""
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .persistence(persistence)
-        .build()
-    )
-
+    application = (Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build())
     application.add_error_handler(error_handler)
     
     conv_handler = ConversationHandler(
@@ -166,7 +190,6 @@ def setup_application(persistence: PicklePersistence) -> Application:
         per_message=False, persistent=True, name="radius_conversation"
     )
     application.add_handler(conv_handler)
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
