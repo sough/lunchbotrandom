@@ -91,7 +91,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     if context.user_data.get('city') and context.user_data.get('last_address'):
-        await update.message.reply_html(f"С возвращением! Ваш город: <b>{context.user_data['city']}</b>. Последний адрес: <b>{context.user_data['last_address']}</b>. Искать по нему?")
+        await update.message.reply_html(f"С возвращением! Ваш город: <b>{context.user_data['city']}</b>. Последний адрес: <b>{context.user_data['last_address']}</b>. Искать по нему? (отправьте 'да' или новый адрес)")
         context.user_data['state'] = 'confirm_address'
     elif context.user_data.get('city'):
         await update.message.reply_html(f"Ваш город: <b>{context.user_data['city']}</b>. Отправьте улицу и номер дома для поиска.")
@@ -102,7 +102,6 @@ async def start(update: Update, context: CallbackContext) -> None:
     save_user_data(user_id, context.user_data)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
-    # --- FIX IS HERE ---
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_city'
@@ -110,7 +109,6 @@ async def set_city_command(update: Update, context: CallbackContext) -> None:
     await update.effective_message.reply_text("Какой новый город выберем?")
 
 async def set_address_command(update: Update, context: CallbackContext) -> None:
-    # --- AND HERE ---
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_address'
@@ -119,7 +117,6 @@ async def set_address_command(update: Update, context: CallbackContext) -> None:
     await update.effective_message.reply_text(f"Какой адрес ищем в городе {city}?")
 
 async def set_radius_command(update: Update, context: CallbackContext) -> None:
-    # --- AND HERE ---
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_radius'
@@ -164,7 +161,11 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
 
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query; await query.answer()
-    if query.data == "repeat_search": await perform_search_and_reply(update, context)
+    
+    # --- FIX IS HERE ---
+    # When a button is pressed, the update object is the query itself.
+    # We pass this query to the command functions.
+    if query.data == "repeat_search": await perform_search_and_reply(query, context)
     elif query.data == "change_address": await set_address_command(query, context)
     elif query.data == "change_radius": await set_radius_command(query, context)
     elif query.data == "change_city": await set_city_command(query, context)
@@ -176,12 +177,9 @@ app = FastAPI(docs_url=None, redoc_url=None)
 async def telegram_webhook(request: Request):
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # These handlers are now only for messages, not buttons
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    # This handler is specifically for button presses
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     try:
         async with application:
