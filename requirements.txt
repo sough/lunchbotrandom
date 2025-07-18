@@ -1,5 +1,6 @@
-python-telegram-bot[persistence]
+python-telegram-bot
 requests
 python-dotenv
 fastapi
 uvicorn
+redis
