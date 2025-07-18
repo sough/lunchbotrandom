@@ -1,12 +1,4 @@
-import os
-import asyncio
-import logging
-import random
-import requests
-import math
-import urllib.parse
-import json
-import redis
+import os, asyncio, logging, random, requests, math, urllib.parse, json, redis
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -96,42 +88,44 @@ async def perform_search_and_reply(update: Update, context: CallbackContext):
 
 # --- Bot Handlers ---
 async def start(update: Update, context: CallbackContext) -> None:
-    """Greets user and starts search or asks for city."""
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
-    
-    # --- CHANGE IS HERE ---
     if context.user_data.get('city') and context.user_data.get('last_address'):
-        await update.message.reply_html(f"С возвращением! Ищу заведения рядом с вашим последним адресом: <b>{context.user_data['last_address']}</b>")
-        await perform_search_and_reply(update, context)
+        await update.message.reply_html(f"С возвращением! Ваш город: <b>{context.user_data['city']}</b>. Последний адрес: <b>{context.user_data['last_address']}</b>. Искать по нему?")
+        context.user_data['state'] = 'confirm_address'
     elif context.user_data.get('city'):
         await update.message.reply_html(f"Ваш город: <b>{context.user_data['city']}</b>. Отправьте улицу и номер дома для поиска.")
         context.user_data['state'] = 'awaiting_address'
-        save_user_data(user_id, context.user_data)
     else:
         await update.message.reply_html("Привет! Пожалуйста, напишите ваш город (например, <b>Алматы</b>).")
         context.user_data['state'] = 'awaiting_city'
-        save_user_data(user_id, context.user_data)
+    save_user_data(user_id, context.user_data)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    # --- FIX IS HERE ---
+    user_id = update.effective_user.id
+    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
-    await update.message.reply_text("Какой новый город выберем?")
+    await update.effective_message.reply_text("Какой новый город выберем?")
 
 async def set_address_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    # --- AND HERE ---
+    user_id = update.effective_user.id
+    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_address'
     save_user_data(user_id, context.user_data)
     city = context.user_data.get('city', 'вашем городе')
-    await update.message.reply_text(f"Какой адрес ищем в городе {city}?")
+    await update.effective_message.reply_text(f"Какой адрес ищем в городе {city}?")
 
 async def set_radius_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    # --- AND HERE ---
+    user_id = update.effective_user.id
+    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_radius'
     save_user_data(user_id, context.user_data)
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
-    await update.message.reply_text(f"Текущий радиус: {current_radius} км. Введите новое значение.")
+    await update.effective_message.reply_text(f"Текущий радиус: {current_radius} км. Введите новое значение.")
 
 async def handle_text(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -152,7 +146,11 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text(f"Радиус обновлен: {new_radius} км. Теперь можете искать по адресу.")
         except (ValueError, TypeError):
             await update.message.reply_text("Неверный формат. Попробуйте еще раз.");
-    else: # Default action: treat as an address
+    elif state == 'confirm_address' and user_text.lower() in ['да', 'yes', 'ок']:
+        context.user_data.pop('state', None)
+        save_user_data(user_id, context.user_data)
+        await perform_search_and_reply(update, context)
+    else:
         city = context.user_data.get('city')
         if not city: await start(update, context); return
         full_address = f"{city}, {user_text}"
@@ -177,9 +175,13 @@ app = FastAPI(docs_url=None, redoc_url=None)
 @app.post("/api")
 async def telegram_webhook(request: Request):
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # These handlers are now only for messages, not buttons
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    # This handler is specifically for button presses
+    application.add_handler(CallbackQueryHandler(button_handler))
     
     try:
         async with application:
