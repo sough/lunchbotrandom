@@ -5,14 +5,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from persistence import load_user_data, save_user_data
 
-# --- Настройка и константы ---
+# --- Setup & Constants ---
 logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_KM = 1.0
 
-# --- Вспомогательные функции ---
+# --- Helper Functions ---
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'; return text.translate(str.maketrans({char: f'\\{char}' for char in escape_chars}))
 
+# THIS IS A SYNCHRONOUS FUNCTION (def, not async def)
 def get_coordinates(address: str) -> tuple | None:
     url = "https://catalog.api.2gis.com/3.0/items/geocode"; params = {"q": address, "key": os.getenv("DGIS_API_KEY"), "fields": "items.point"}
     try:
@@ -45,7 +46,7 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     if update.callback_query: await update.callback_query.edit_message_text(text="_Ищу другой вариант\\.\\.\\._", parse_mode='MarkdownV2')
     radius_km = context.user_data.get('radius_km', DEFAULT_RADIUS_KM); radius_meters = int(radius_km * 1000)
     
-    place = await get_random_lunch_place(coords[0], coords[1], radius_meters)
+    place = get_random_lunch_place(coords[0], coords[1], radius_meters)
     if not place:
         message_text = f"К сожалению, я не нашел заведений в радиусе {radius_km} км."
         if update.callback_query: await update.callback_query.edit_message_text(text=message_text)
@@ -69,7 +70,7 @@ async def perform_search_and_reply(update: Update, context: CallbackContext, coo
     if update.callback_query: await update.callback_query.edit_message_text(text=message_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
     else: await update.message.reply_markdown_v2(message_text, reply_markup=reply_markup)
 
-# --- Обработчики ---
+# --- Handlers ---
 async def start(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
@@ -108,6 +109,9 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
     user_text = update.message.text
     
     if state == 'awaiting_city':
+        # --- FIX IS HERE ---
+        coords = get_coordinates(user_text) # Removed await
+        if not coords: await update.message.reply_text("Не смог найти такой город. Попробуйте еще раз."); return
         context.user_data['city'] = user_text
         context.user_data['state'] = 'awaiting_address'
         save_user_data(user_id, context.user_data)
@@ -129,14 +133,15 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
     if not city: await start(update, context); return
     full_address = f"{city}, {user_text}"
     await update.message.reply_text(f"Ищу заведения рядом с {full_address}...")
-    coords = await get_coordinates(full_address)
+    
+    # --- AND FIX IS HERE ---
+    coords = get_coordinates(full_address) # Removed await
     if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
     context.user_data['last_coords'] = [coords[0], coords[1]]
     save_user_data(user_id, context.user_data)
     
     await perform_search_and_reply(update, context, coords, is_new_search=True)
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ---
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query; await query.answer()
     user_id = update.effective_user.id
@@ -144,10 +149,7 @@ async def button_handler(update: Update, context: CallbackContext):
     
     if query.data == "repeat_search":
         coords = context.user_data.get('last_coords')
-        if not coords:
-            await query.edit_message_text("Нет сохраненных координат. Начните с /start.")
-            return
-        # Просто вызываем центральную функцию, которая содержит правильную логику
+        if not coords: await query.edit_message_text("Нет сохраненных координат. Начните с /start."); return
         await perform_search_and_reply(update, context, coords)
     
     elif query.data == "change_radius":
