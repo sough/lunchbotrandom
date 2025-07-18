@@ -30,21 +30,32 @@ class EdgeConfigPersistence(BasePersistence):
     def _write_item(self, key: str, value: dict) -> None:
         """Writes a single key-value pair to Edge Config."""
         try:
-            # Vercel's API requires a PATCH for updates, even for a single item
             payload = {"items": [{"operation": "update", "key": key, "value": value}]}
             response = requests.patch(self.api_endpoint, headers=self.headers, json=payload, timeout=5)
             response.raise_for_status()
         except requests.RequestException as e:
             logger.error(f"Failed to write item '{key}' to Edge Config: {e}. Response: {e.response.text if e.response else 'No response'}")
 
+    # --- MODIFIED FUNCTION ---
     def _read_item(self, key: str) -> dict | None:
-        """Reads a single item from Edge Config."""
+        """Reads a single item from Edge Config, handling empty responses."""
         try:
             response = requests.get(f"{self.item_endpoint}/{key}", headers={"Authorization": f"Bearer {self.api_token}"}, timeout=5)
+            
+            # Key does not exist
             if response.status_code == 404:
                 return None
+            
+            # Raise exceptions for other HTTP errors (401, 403, 500, etc.)
             response.raise_for_status()
+
+            # If the response is successful but the body is empty, return None
+            if not response.text:
+                return None
+            
+            # If we have a non-empty body, parse it as JSON
             return response.json()
+
         except (requests.RequestException, json.JSONDecodeError) as e:
             logger.error(f"Failed to read item '{key}' from Edge Config: {e}")
             return None
@@ -60,15 +71,14 @@ class EdgeConfigPersistence(BasePersistence):
 
     # --- Implemented Abstract Methods ---
     async def get_user_data(self) -> dict[int, dict]:
-        # We will load user data on demand via refresh_user_data,
-        # so we start with an empty dictionary.
+        # This implementation loads data on-demand via refresh_user_data
         return {}
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
         self._write_item(f"user_{user_id}", data)
 
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None:
-        """This is now the main method for loading data for a specific user."""
+        """Loads data for a specific user when needed."""
         fresh_data = self._read_item(f"user_{user_id}")
         if fresh_data:
             user_data.update(fresh_data)
@@ -76,7 +86,7 @@ class EdgeConfigPersistence(BasePersistence):
     async def drop_user_data(self, user_id: int) -> None:
         self._delete_item(f"user_{user_id}")
     
-    # --- Other required methods (simplified) ---
+    # --- Other required methods ---
     async def get_bot_data(self) -> dict:
         return self._read_item("bot_data") or {}
     async def update_bot_data(self, data: dict) -> None:
