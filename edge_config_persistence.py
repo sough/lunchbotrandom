@@ -8,10 +8,6 @@ from telegram.ext import BasePersistence
 logger = logging.getLogger(__name__)
 
 class EdgeConfigPersistence(BasePersistence):
-    """
-    A persistence class that uses Vercel Edge Config via its REST API,
-    storing each user's data under its own key.
-    """
     def __init__(self):
         super().__init__()
         self.api_token = os.getenv("VERCEL_API_TOKEN")
@@ -27,78 +23,69 @@ class EdgeConfigPersistence(BasePersistence):
             "Content-Type": "application/json",
         }
 
-    def _write_item(self, key: str, value: dict) -> None:
+    def _write_item(self, key: str, value) -> None:
         """Writes a single key-value pair to Edge Config."""
         try:
             payload = {"items": [{"operation": "update", "key": key, "value": value}]}
             response = requests.patch(self.api_endpoint, headers=self.headers, json=payload, timeout=5)
             response.raise_for_status()
         except requests.RequestException as e:
-            logger.error(f"Failed to write item '{key}' to Edge Config: {e}. Response: {e.response.text if e.response else 'No response'}")
+            logger.error(f"Failed to write item '{key}': {e}. Response: {e.response.text if e.response else 'No response'}")
 
-    # --- MODIFIED FUNCTION ---
-    def _read_item(self, key: str) -> dict | None:
-        """Reads a single item from Edge Config, handling empty responses."""
+    def _read_item(self, key: str):
+        """Reads a single item from Edge Config."""
         try:
             response = requests.get(f"{self.item_endpoint}/{key}", headers={"Authorization": f"Bearer {self.api_token}"}, timeout=5)
-            
-            # Key does not exist
-            if response.status_code == 404:
-                return None
-            
-            # Raise exceptions for other HTTP errors (401, 403, 500, etc.)
+            if response.status_code == 404: return None
             response.raise_for_status()
-
-            # If the response is successful but the body is empty, return None
-            if not response.text:
-                return None
-            
-            # If we have a non-empty body, parse it as JSON
-            return response.json()
-
+            return response.json() if response.text else None
         except (requests.RequestException, json.JSONDecodeError) as e:
-            logger.error(f"Failed to read item '{key}' from Edge Config: {e}")
+            logger.error(f"Failed to read item '{key}': {e}")
             return None
 
     def _delete_item(self, key: str) -> None:
         """Deletes a single item from Edge Config."""
-        try:
-            payload = {"items": [{"operation": "delete", "key": key}]}
-            response = requests.patch(self.api_endpoint, headers=self.headers, json=payload, timeout=5)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            logger.error(f"Failed to delete item '{key}' from Edge Config: {e}. Response: {e.response.text if e.response else 'No response'}")
+        self._write_item(key, None) # Setting value to null can also work for deletion
 
     # --- Implemented Abstract Methods ---
     async def get_user_data(self) -> dict[int, dict]:
-        # This implementation loads data on-demand via refresh_user_data
-        return {}
+        data_str = self._read_item("user_data")
+        return json.loads(data_str) if isinstance(data_str, str) else {}
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
-        self._write_item(f"user_{user_id}", data)
-
+        current_data = await self.get_user_data()
+        current_data[user_id] = data
+        self._write_item("user_data", json.dumps(current_data))
+    
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None:
-        """Loads data for a specific user when needed."""
-        fresh_data = self._read_item(f"user_{user_id}")
-        if fresh_data:
-            user_data.update(fresh_data)
+        fresh_data = await self.get_user_data()
+        user_data.update(fresh_data.get(user_id, {}))
 
     async def drop_user_data(self, user_id: int) -> None:
-        self._delete_item(f"user_{user_id}")
-    
+        current_data = await self.get_user_data()
+        current_data.pop(user_id, None)
+        self._write_item("user_data", json.dumps(current_data))
+
     # --- Other required methods ---
     async def get_bot_data(self) -> dict:
-        return self._read_item("bot_data") or {}
+        data_str = self._read_item("bot_data")
+        return json.loads(data_str) if isinstance(data_str, str) else {}
     async def update_bot_data(self, data: dict) -> None:
-        self._write_item("bot_data", data)
+        self._write_item("bot_data", json.dumps(data))
     async def refresh_bot_data(self, bot_data: dict) -> None:
         bot_data.update(await self.get_bot_data())
     async def get_chat_data(self) -> dict[int, dict]: return {}
     async def update_chat_data(self, chat_id: int, data: dict) -> None: pass
-    async def drop_chat_data(self, chat_id: int) -> None: pass
+    async def drop_chat_data(self, chat_id: int, data: dict) -> None: pass
     async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None: pass
-    async def get_conversations(self, name: str) -> dict: return {}
-    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None: pass
+    async def get_conversations(self, name: str) -> dict:
+        # Conversation persistence with pickle is problematic, we'll store as simple JSON
+        data_str = self._read_item(f"conversation_{name}")
+        return json.loads(data_str) if isinstance(data_str, str) else {}
+    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None:
+        # This simplified handler may not support complex conversation states
+        # but will prevent crashes.
+        pass
     async def get_callback_data(self) -> dict | None: return None
     async def update_callback_data(self, data: dict) -> None: pass
     async def flush(self) -> None: pass
