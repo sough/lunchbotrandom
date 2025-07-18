@@ -13,11 +13,11 @@ class EdgeConfigPersistence(BasePersistence):
         self.edge_config_url = os.getenv("EDGE_CONFIG")
         if not self.edge_config_url:
             raise ValueError("EDGE_CONFIG environment variable not set.")
-        # The API endpoint is the connection string with /items at the end
         self.api_endpoint = f"{self.edge_config_url}/items"
+        self.headers = {"Content-Type": "application/json"}
 
     def _read_all_data(self) -> dict:
-        """Helper function to read all items from Edge Config."""
+        """Helper to read all items from Edge Config."""
         try:
             response = requests.get(self.api_endpoint, timeout=5)
             response.raise_for_status()
@@ -26,53 +26,94 @@ class EdgeConfigPersistence(BasePersistence):
             return {}
 
     def _write_items(self, items: list) -> None:
-        """Helper function to write items to Edge Config."""
+        """Helper to write items to Edge Config."""
         try:
-            headers = {"Content-Type": "application/json"}
             payload = {"items": items}
-            response = requests.patch(self.api_endpoint, headers=headers, json=payload, timeout=5)
+            response = requests.patch(self.api_endpoint, headers=self.headers, json=payload, timeout=5)
             response.raise_for_status()
         except requests.RequestException as e:
             print(f"Failed to write to Edge Config: {e}")
+            
+    def _read_single_item(self, key: str):
+        """Helper to read a single item."""
+        try:
+            response = requests.get(f"{self.edge_config_url}/item/{key}", timeout=5)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException:
+            return None
 
-    async def get_user_data(self) -> dict[int, dict]:
-        all_data = self._read_all_data()
-        user_data = {}
-        for key, value in all_data.items():
-            if key.startswith("user_"):
-                try:
-                    user_id = int(key.split("_")[1])
-                    user_data[user_id] = pickle.loads(bytes.fromhex(value))
-                except (ValueError, IndexError):
-                    continue
-        return user_data
+    def _delete_item(self, key: str):
+        """Helper to delete an item."""
+        self._write_items([{"operation": "delete", "key": key}])
 
-    async def update_user_data(self, user_id: int, data: dict) -> None:
-        key = f"user_{user_id}"
-        # We store the pickled data as a hex string to keep it JSON-compatible
-        value = pickle.dumps(data).hex()
-        self._write_items([{"operation": "update", "key": key, "value": value}])
-
-    async def get_chat_data(self) -> dict[int, dict]:
-        # Implement similarly if you need chat_data persistence
-        return {}
-
-    async def update_chat_data(self, chat_id: int, data: dict) -> None:
-        # Implement similarly if you need chat_data persistence
-        pass
 
     async def get_bot_data(self) -> dict:
-        all_data = self._read_all_data()
-        hex_data = all_data.get("bot_data")
-        return pickle.loads(bytes.fromhex(hex_data)) if hex_data else {}
+        data = self._read_single_item("bot_data")
+        return pickle.loads(bytes.fromhex(data)) if data else {}
 
     async def update_bot_data(self, data: dict) -> None:
         value = pickle.dumps(data).hex()
         self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
 
-    # ... other required methods can be left as pass ...
+    async def get_chat_data(self) -> dict[int, dict]:
+        # This implementation fetches data on demand.
+        return {}
+
+    async def update_chat_data(self, chat_id: int, data: dict) -> None:
+        key = f"chat_{chat_id}"
+        value = pickle.dumps(data).hex()
+        self._write_items([{"operation": "update", "key": key, "value": value}])
+
+    async def get_user_data(self) -> dict[int, dict]:
+        # This implementation fetches data on demand.
+        return {}
+
+    async def update_user_data(self, user_id: int, data: dict) -> None:
+        key = f"user_{user_id}"
+        value = pickle.dumps(data).hex()
+        self._write_items([{"operation": "update", "key": key, "value": value}])
+        
+    async def get_conversations(self, name: str) -> dict:
+        data = self._read_single_item(f"conversation_{name}")
+        return pickle.loads(bytes.fromhex(data)) if data else {}
+
+    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None:
+        conversations = await self.get_conversations(name)
+        if new_state is None:
+            conversations.pop(key, None)
+        else:
+            conversations[key] = new_state
+        
+        redis_key = f"conversation_{name}"
+        value = pickle.dumps(conversations).hex()
+        self._write_items([{"operation": "update", "key": redis_key, "value": value}])
+
+    # --- NEWLY IMPLEMENTED METHODS ---
+    async def drop_chat_data(self, chat_id: int) -> None:
+        self._delete_item(f"chat_{chat_id}")
+
+    async def drop_user_data(self, user_id: int) -> None:
+        self._delete_item(f"user_{user_id}")
+
+    async def refresh_bot_data(self, bot_data: dict) -> None:
+        data = await self.get_bot_data()
+        bot_data.update(data)
+
+    async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None:
+        key = f"chat_{chat_id}"
+        data_str = self._read_single_item(key)
+        data = pickle.loads(bytes.fromhex(data_str)) if data_str else {}
+        chat_data.update(data)
+
+    async def refresh_user_data(self, user_id: int, user_data: dict) -> None:
+        key = f"user_{user_id}"
+        data_str = self._read_single_item(key)
+        data = pickle.loads(bytes.fromhex(data_str)) if data_str else {}
+        user_data.update(data)
+        
     async def get_callback_data(self) -> dict | None: return None
     async def update_callback_data(self, data: dict) -> None: pass
     async def flush(self) -> None: pass
-    async def get_conversations(self, name: str) -> dict: return {}
-    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None: pass
