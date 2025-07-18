@@ -1,4 +1,12 @@
-import os, asyncio, logging, random, requests, math, urllib.parse, json, redis
+import os
+import asyncio
+import logging
+import random
+import requests
+import math
+import urllib.parse
+import json
+import redis
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -30,7 +38,6 @@ def load_user_data(user_id: int) -> dict:
 def save_user_data(user_id: int, data: dict) -> None:
     if not redis_client: return
     try:
-        # Convert tuple to list for JSON compatibility
         if 'last_coords' in data and isinstance(data['last_coords'], tuple):
             data['last_coords'] = list(data['last_coords'])
         redis_client.set(f"user:{user_id}", json.dumps(data))
@@ -89,18 +96,22 @@ async def perform_search_and_reply(update: Update, context: CallbackContext):
 
 # --- Bot Handlers ---
 async def start(update: Update, context: CallbackContext) -> None:
+    """Greets user and starts search or asks for city."""
     user_id = update.effective_user.id
     context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    
+    # --- CHANGE IS HERE ---
     if context.user_data.get('city') and context.user_data.get('last_address'):
-        await update.message.reply_html(f"С возвращением! Ваш город: <b>{context.user_data['city']}</b>. Последний адрес: <b>{context.user_data['last_address']}</b>. Искать по нему? (отправьте 'да' или новый адрес)")
-        context.user_data['state'] = 'confirm_address'
+        await update.message.reply_html(f"С возвращением! Ищу заведения рядом с вашим последним адресом: <b>{context.user_data['last_address']}</b>")
+        await perform_search_and_reply(update, context)
     elif context.user_data.get('city'):
         await update.message.reply_html(f"Ваш город: <b>{context.user_data['city']}</b>. Отправьте улицу и номер дома для поиска.")
         context.user_data['state'] = 'awaiting_address'
+        save_user_data(user_id, context.user_data)
     else:
         await update.message.reply_html("Привет! Пожалуйста, напишите ваш город (например, <b>Алматы</b>).")
         context.user_data['state'] = 'awaiting_city'
-    save_user_data(user_id, context.user_data)
+        save_user_data(user_id, context.user_data)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
@@ -141,24 +152,16 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text(f"Радиус обновлен: {new_radius} км. Теперь можете искать по адресу.")
         except (ValueError, TypeError):
             await update.message.reply_text("Неверный формат. Попробуйте еще раз.");
-    elif state == 'confirm_address' and user_text.lower() in ['да', 'yes', 'ок']:
-        context.user_data.pop('state', None)
-        save_user_data(user_id, context.user_data)
-        await perform_search_and_reply(update, context)
-    else:
+    else: # Default action: treat as an address
         city = context.user_data.get('city')
         if not city: await start(update, context); return
         full_address = f"{city}, {user_text}"
         await update.message.reply_text(f"Ищу заведения рядом с адресом: {full_address}...")
         coords = get_coordinates(full_address)
         if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
-        
-        # --- FIX IS HERE ---
-        context.user_data['last_coords'] = coords
-        context.user_data['last_address'] = full_address
+        context.user_data['last_coords'] = coords; context.user_data['last_address'] = full_address
         context.user_data.pop('state', None)
-        save_user_data(user_id, context.user_data) # This line was missing
-        
+        save_user_data(user_id, context.user_data)
         await perform_search_and_reply(update, context)
 
 async def button_handler(update: Update, context: CallbackContext):
