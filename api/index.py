@@ -67,4 +67,4 @@ async def telegram_webhook(request: Request):
 @app.get("/")
 def health_check():
     """A simple endpoint to check if the service is alive."""
-    return {"status": "ok"}
+    return {"status": "ok!"}
