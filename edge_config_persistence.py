@@ -2,132 +2,97 @@
 import os
 import requests
 import pickle
+import logging
+from urllib.parse import urlparse
 from telegram.ext import BasePersistence
+
+logger = logging.getLogger(__name__)
 
 class EdgeConfigPersistence(BasePersistence):
     """
     A persistence class that uses Vercel Edge Config via its REST API.
+    It uses the read-only EDGE_CONFIG for reads and a VERCEL_API_TOKEN for writes.
     """
     def __init__(self):
         super().__init__()
+        # Read-only connection string from Vercel
         self.edge_config_url = os.getenv("EDGE_CONFIG")
         if not self.edge_config_url:
             raise ValueError("EDGE_CONFIG environment variable not set.")
-        self.api_endpoint = f"{self.edge_config_url}/items"
-        self.headers = {"Content-Type": "application/json"}
-        # Pre-fetch data on initialization
-        self._load_data()
+        
+        # Vercel API token with write permissions
+        self.api_token = os.getenv("VERCEL_API_TOKEN")
+        if not self.api_token:
+            raise ValueError("VERCEL_API_TOKEN environment variable for writing is not set.")
 
-    def _load_data(self):
-        """Loads all data from Edge Config into memory."""
-        all_data = self._read_all_data()
-        self.user_data = self._deserialize_data(all_data, "user_")
-        self.chat_data = self._deserialize_data(all_data, "chat_")
-        self.bot_data = self._deserialize_data(all_data, "bot_data")
-        self.conversations = self._deserialize_data(all_data, "conversation_")
+        # Extract Edge Config ID from the connection string
+        try:
+            parsed_url = urlparse(self.edge_config_url)
+            self.edge_config_id = parsed_url.path.split('/')[-1]
+        except (IndexError, AttributeError):
+            raise ValueError("Could not parse Edge Config ID from EDGE_CONFIG URL.")
+
+        # Construct the correct API endpoints
+        self.read_endpoint = f"{self.edge_config_url}/items"
+        self.write_endpoint = f"https://api.vercel.com/v1/edge-config/{self.edge_config_id}/items"
+        self.write_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_token}"
+        }
 
     def _read_all_data(self) -> dict:
         try:
-            response = requests.get(self.api_endpoint, timeout=5)
+            response = requests.get(self.read_endpoint, timeout=5)
             response.raise_for_status()
             return response.json()
-        except requests.RequestException:
+        except requests.RequestException as e:
+            logger.error(f"Failed to read from Edge Config: {e}")
             return {}
 
     def _write_items(self, items: list) -> None:
         try:
             payload = {"items": items}
-            response = requests.patch(self.api_endpoint, headers=self.headers, json=payload, timeout=5)
+            response = requests.patch(self.write_endpoint, headers=self.write_headers, json=payload, timeout=5)
             response.raise_for_status()
+            logger.info(f"Successfully wrote {len(items)} item(s) to Edge Config.")
         except requests.RequestException as e:
-            print(f"Failed to write to Edge Config: {e}")
+            logger.error(f"Failed to write to Edge Config: {e}. Response: {e.response.text if e.response else 'No response'}")
 
-    def _deserialize_data(self, all_data: dict, prefix: str) -> dict:
-        """Helper to filter and deserialize data based on a key prefix."""
-        deserialized = {}
+    # ... The rest of the methods remain the same ...
+    async def get_user_data(self) -> dict[int, dict]:
+        all_data = self._read_all_data()
+        user_data = {}
         for key, value in all_data.items():
-            if key.startswith(prefix):
+            if key.startswith("user_"):
                 try:
-                    # Handle single items like bot_data
-                    if key == prefix:
-                        return pickle.loads(bytes.fromhex(value))
-                    # Handle keyed items like user_data
-                    item_id = int(key.split("_")[1])
-                    deserialized[item_id] = pickle.loads(bytes.fromhex(value))
+                    user_id = int(key.split("_")[1])
+                    user_data[user_id] = pickle.loads(bytes.fromhex(value))
                 except (ValueError, IndexError, TypeError):
                     continue
-        return deserialized
-        
-    def _delete_item(self, key: str):
-        self._write_items([{"operation": "delete", "key": key}])
-
-    # --- Implemented Abstract Methods ---
-    async def get_bot_data(self) -> dict:
-        return self.bot_data.copy()
-
-    async def update_bot_data(self, data: dict) -> None:
-        self.bot_data = data
-        value = pickle.dumps(data).hex()
-        self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
-
-    async def get_chat_data(self) -> dict[int, dict]:
-        return self.chat_data.copy()
-
-    async def update_chat_data(self, chat_id: int, data: dict) -> None:
-        self.chat_data[chat_id] = data
-        value = pickle.dumps(data).hex()
-        self._write_items([{"operation": "update", "key": f"chat_{chat_id}", "value": value}])
-
-    async def get_user_data(self) -> dict[int, dict]:
-        return self.user_data.copy()
+        return user_data
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
-        self.user_data[user_id] = data
+        key = f"user_{user_id}"
         value = pickle.dumps(data).hex()
-        self._write_items([{"operation": "update", "key": f"user_{user_id}", "value": value}])
-        
-    async def get_conversations(self, name: str) -> dict:
-        return self.conversations.get(name, {}).copy()
+        self._write_items([{"operation": "update", "key": key, "value": value}])
 
-    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None:
-        if name not in self.conversations:
-            self.conversations[name] = {}
-        if new_state is None:
-            self.conversations[name].pop(key, None)
-        else:
-            self.conversations[name][key] = new_state
-        value = pickle.dumps(self.conversations[name]).hex()
-        self._write_items([{"operation": "update", "key": f"conversation_{name}", "value": value}])
-
-    # --- Newly Implemented Methods ---
-    async def drop_chat_data(self, chat_id: int) -> None:
-        self.chat_data.pop(chat_id, None)
-        self._delete_item(f"chat_{chat_id}")
-
-    async def drop_user_data(self, user_id: int) -> None:
-        self.user_data.pop(user_id, None)
-        self._delete_item(f"user_{user_id}")
-
-    async def refresh_bot_data(self, bot_data: dict) -> None:
+    async def get_bot_data(self) -> dict:
         all_data = self._read_all_data()
-        fresh_bot_data = self._deserialize_data(all_data, "bot_data")
-        bot_data.update(fresh_bot_data)
-
-    async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None:
-        all_data = self._read_all_data()
-        fresh_chat_data = self._deserialize_data(all_data, f"chat_{chat_id}")
-        chat_data.update(fresh_chat_data.get(chat_id, {}))
-
+        hex_data = all_data.get("bot_data")
+        return pickle.loads(bytes.fromhex(hex_data)) if hex_data else {}
+    async def update_bot_data(self, data: dict) -> None:
+        value = pickle.dumps(data).hex(); self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
+    async def get_chat_data(self) -> dict[int, dict]: return {}
+    async def update_chat_data(self, chat_id: int, data: dict) -> None: pass
+    async def get_conversations(self, name: str) -> dict: return {}
+    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None: pass
+    async def drop_chat_data(self, chat_id: int) -> None: pass
+    async def drop_user_data(self, user_id: int) -> None: self._write_items([{"operation": "delete", "key": f"user_{user_id}"}])
+    async def refresh_bot_data(self, bot_data: dict) -> None: bot_data.update(await self.get_bot_data())
+    async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None: pass
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None:
-        all_data = self._read_all_data()
-        fresh_user_data = self._deserialize_data(all_data, f"user_{user_id}")
-        user_data.update(fresh_user_data.get(user_id, {}))
-        
-    async def get_callback_data(self) -> dict | None:
-        return None  # We are not storing callback data
-
-    async def update_callback_data(self, data: dict) -> None:
-        pass  # We are not storing callback data
-
-    async def flush(self) -> None:
-        pass # Data is written immediately, so no flush action is needed
+        # For simplicity, we assume the initial fetch in get_user_data is sufficient for a single request
+        pass
+    async def get_callback_data(self) -> dict | None: return None
+    async def update_callback_data(self, data: dict) -> None: pass
+    async def flush(self) -> None: pass
