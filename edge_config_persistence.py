@@ -32,10 +32,22 @@ class EdgeConfigPersistence(BasePersistence):
         try:
             response = requests.get(self.api_endpoint, headers={"Authorization": f"Bearer {self.api_token}"}, timeout=5)
             response.raise_for_status()
-            # --- FIX IS HERE ---
-            # The API returns a dictionary with an "items" key, which contains the data
             data = response.json()
-            return data.get("items", {})
+            
+            # --- ADDED LOGGING ---
+            logger.info(f"Raw Edge Config response: {data}")
+            
+            # --- FIX IS HERE ---
+            # Check if the response is a dictionary containing an 'items' key
+            if isinstance(data, dict) and 'items' in data:
+                return data['items']
+            # If the response itself is the dictionary of items
+            elif isinstance(data, dict):
+                 return data
+            else:
+                logger.warning(f"Unexpected data type from Edge Config: {type(data)}")
+                return {}
+
         except (requests.RequestException, json.JSONDecodeError) as e:
             logger.error(f"Failed to read or parse from Edge Config: {e}")
             return {}
@@ -51,20 +63,20 @@ class EdgeConfigPersistence(BasePersistence):
     # --- Implemented Abstract Methods ---
     async def get_user_data(self) -> dict[int, dict]:
         all_data = self._read_all_data()
-        user_data_str = all_data.get("user_data")
+        user_data_str = all_data.get("user_data") # Use .get() for safety
+        
         if isinstance(user_data_str, str):
             try:
                 user_data = json.loads(user_data_str)
-                # Keys in JSON are strings, convert them back to integers
                 return {int(k): v for k, v in user_data.items()}
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
+                logger.error("Could not decode user_data from Edge Config.")
                 return {}
-        return user_data_str or {} # Return the dict if it's already a dict, or empty
+        return user_data_str or {}
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
         all_user_data = await self.get_user_data()
         all_user_data[user_id] = data
-        # Edge Config values must be JSON-serializable. We'll store the dict as a string.
         self._write_items([{"operation": "update", "key": "user_data", "value": json.dumps(all_user_data)}])
     
     # --- Other required methods (simplified) ---
@@ -85,7 +97,7 @@ class EdgeConfigPersistence(BasePersistence):
     async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None: pass
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None: 
         all_user_data = await self.get_user_data()
-        user_data.update(all_user_data.get(user_id, {}))
+        user_data.update(all_user_data.get(str(user_id), {}))
     async def get_callback_data(self) -> dict | None: return None
     async def update_callback_data(self, data: dict) -> None: pass
     async def flush(self) -> None: pass
