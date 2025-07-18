@@ -1,12 +1,5 @@
-import os
-import asyncio
-import logging
-import random
-import requests
-import math
-import urllib.parse
-import json
-import redis
+# api/index.py
+import os, asyncio, logging, random, requests, math, urllib.parse, json, redis
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -15,8 +8,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_KM = 1.0
-app = FastAPI(docs_url=None, redoc_url=None)
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+app = FastAPI(docs_url=None, redoc_url=None)
 
 # --- Database (Vercel KV / Redis) ---
 try:
@@ -67,7 +61,11 @@ def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict |
 # --- Main Bot Logic ---
 async def start(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id)
+    # --- FIX IS HERE ---
+    # Correctly modify context.user_data instead of reassigning
+    context.user_data.clear()
+    context.user_data.update(load_user_data(user_id))
+    
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
     
     start_message = (f"Привет, {update.effective_user.mention_html()}!\n\n"
@@ -82,13 +80,17 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_html(start_message)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id; context.user_data = load_user_data(user_id)
+    user_id = update.effective_user.id
+    context.user_data.clear()
+    context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
     await update.message.reply_text("Какой новый город выберем?")
     
 async def set_radius_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id; context.user_data = load_user_data(user_id)
+    user_id = update.effective_user.id
+    context.user_data.clear()
+    context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_radius'
     save_user_data(user_id, context.user_data)
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
@@ -96,15 +98,19 @@ async def set_radius_command(update: Update, context: CallbackContext) -> None:
 
 async def handle_text(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id)
+    context.user_data.clear()
+    context.user_data.update(load_user_data(user_id))
+    
     state = context.user_data.get('state')
     user_text = update.message.text
     
     if state == 'awaiting_city':
-        context.user_data['city'] = user_text; context.user_data['state'] = 'awaiting_address'
+        context.user_data['city'] = user_text
+        context.user_data['state'] = 'awaiting_address'
         save_user_data(user_id, context.user_data)
         await update.message.reply_text(f"Город '{user_text}' сохранен. Теперь отправьте улицу и номер дома.")
         return
+        
     elif state == 'awaiting_radius':
         try:
             new_radius = float(user_text.replace(',', '.'));
@@ -122,7 +128,7 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"Ищу заведения рядом с {full_address}...")
     coords = get_coordinates(full_address)
     if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
-    context.user_data['last_coords'] = [coords[0], coords[1]] # Store as list for JSON
+    context.user_data['last_coords'] = [coords[0], coords[1]]
     save_user_data(user_id, context.user_data)
     
     place = get_random_lunch_place(coords[0], coords[1], int(context.user_data.get('radius_km', DEFAULT_RADIUS_KM) * 1000))
@@ -138,7 +144,9 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query; await query.answer()
     user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id)
+    context.user_data.clear()
+    context.user_data.update(load_user_data(user_id))
+    
     if query.data == "repeat_search":
         coords = context.user_data.get('last_coords')
         if not coords: await query.edit_message_text("Нет сохраненных координат. Начните с /start."); return
@@ -154,19 +162,17 @@ async def button_handler(update: Update, context: CallbackContext):
     elif query.data == "change_radius":
         await set_radius_command(query, context)
 
-# --- FastAPI Main Handler ---
+# --- FastAPI Boilerplate ---
 @app.post("/api")
 async def telegram_webhook(request: Request):
     """This function is the single entry point for all incoming Telegram updates."""
-    
-    # Build the application and its handlers on each request
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city_command))
     application.add_handler(CommandHandler("radius", set_radius_command))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
+    
     try:
         async with application:
             await application.initialize()
@@ -174,10 +180,8 @@ async def telegram_webhook(request: Request):
             update = Update.de_json(data, application.bot)
             await application.process_update(update)
             await application.shutdown()
-            
     except Exception as e:
         logger.error(f"Error processing update: {e}", exc_info=True)
-        
     return Response(status_code=200)
 
 @app.get("/")
