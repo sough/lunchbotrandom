@@ -4,6 +4,8 @@ import asyncio
 import logging
 import json
 from fastapi import FastAPI, Request, Response, HTTPException
+from edge_config_persistence import EdgeConfigPersistence
+
 
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
@@ -26,7 +28,8 @@ async def main_handler(request_data: dict):
     
     # Create the application object on every invocation.
     # In a serverless environment, this is safer than relying on a global instance.
-    persistence = PicklePersistence(filepath="/tmp/bot_persistence")
+    persistence = EdgeConfigPersistence()
+
     bot_token = os.getenv("TELEGRAM_TOKEN")
     
     application = (
