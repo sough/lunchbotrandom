@@ -1,4 +1,3 @@
-# edge_config_persistence.py
 import os
 import requests
 import pickle
@@ -58,7 +57,6 @@ class EdgeConfigPersistence(BasePersistence):
         except requests.RequestException as e:
             logger.error(f"Failed to write to Edge Config: {e}. Response: {e.response.text if e.response else 'No response'}")
 
-    # ... The rest of the methods remain the same ...
     async def get_user_data(self) -> dict[int, dict]:
         all_data = self._read_all_data()
         user_data = {}
@@ -80,19 +78,44 @@ class EdgeConfigPersistence(BasePersistence):
         all_data = self._read_all_data()
         hex_data = all_data.get("bot_data")
         return pickle.loads(bytes.fromhex(hex_data)) if hex_data else {}
+
     async def update_bot_data(self, data: dict) -> None:
-        value = pickle.dumps(data).hex(); self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
-    async def get_chat_data(self) -> dict[int, dict]: return {}
-    async def update_chat_data(self, chat_id: int, data: dict) -> None: pass
-    async def get_conversations(self, name: str) -> dict: return {}
-    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None: pass
-    async def drop_chat_data(self, chat_id: int) -> None: pass
-    async def drop_user_data(self, user_id: int) -> None: self._write_items([{"operation": "delete", "key": f"user_{user_id}"}])
-    async def refresh_bot_data(self, bot_data: dict) -> None: bot_data.update(await self.get_bot_data())
-    async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None: pass
+        value = pickle.dumps(data).hex()
+        self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
+
+    async def get_chat_data(self) -> dict[int, dict]:
+        return {}
+
+    async def update_chat_data(self, chat_id: int, data: dict) -> None:
+        pass
+
+    async def get_conversations(self, name: str) -> dict:
+        return {}
+
+    async def update_conversation(self, name: str, key: tuple, new_state: object | None) -> None:
+        pass
+
+    async def drop_chat_data(self, chat_id: int) -> None:
+        pass
+
+    async def drop_user_data(self, user_id: int) -> None:
+        self._write_items([{"operation": "delete", "key": f"user_{user_id}"}])
+
+    async def refresh_bot_data(self, bot_data: dict) -> None:
+        bot_data.update(await self.get_bot_data())
+
+    async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None:
+        pass
+
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None:
         # For simplicity, we assume the initial fetch in get_user_data is sufficient for a single request
         pass
-    async def get_callback_data(self) -> dict | None: return None
-    async def update_callback_data(self, data: dict) -> None: pass
-    async def flush(self) -> None: pass
+    
+    async def get_callback_data(self) -> dict | None:
+        return None
+
+    async def update_callback_data(self, data: dict) -> None:
+        pass
+        
+    async def flush(self) -> None:
+        pass
