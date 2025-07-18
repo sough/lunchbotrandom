@@ -152,9 +152,13 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"Ищу заведения рядом с адресом: {full_address}...")
         coords = get_coordinates(full_address)
         if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
-        context.user_data['last_coords'] = coords; context.user_data['last_address'] = full_address
+        
+        # --- FIX IS HERE ---
+        context.user_data['last_coords'] = coords
+        context.user_data['last_address'] = full_address
         context.user_data.pop('state', None)
-        save_user_data(user_id, context.user_data)
+        save_user_data(user_id, context.user_data) # This line was missing
+        
         await perform_search_and_reply(update, context)
 
 async def button_handler(update: Update, context: CallbackContext):
