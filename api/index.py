@@ -1,5 +1,12 @@
-# api/index.py
-import os, asyncio, logging, random, requests, math, urllib.parse, json, redis
+import os
+import asyncio
+import logging
+import random
+import requests
+import math
+import urllib.parse
+import json
+import redis
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -8,6 +15,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_KM = 1.0
+app = FastAPI(docs_url=None, redoc_url=None)
+BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # --- Database (Vercel KV / Redis) ---
 try:
@@ -58,8 +67,7 @@ def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict |
 # --- Main Bot Logic ---
 async def start(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id) # Load data from DB
-    
+    context.user_data = load_user_data(user_id)
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
     
     start_message = (f"Привет, {update.effective_user.mention_html()}!\n\n"
@@ -68,20 +76,19 @@ async def start(update: Update, context: CallbackContext) -> None:
         start_message += f"Ваш сохраненный город: <b>{context.user_data['city']}</b>. Просто отправьте улицу и номер дома."
     else:
         start_message += "Для начала, пожалуйста, напишите мне свой город."
+    
     context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
     await update.message.reply_html(start_message)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id)
+    user_id = update.effective_user.id; context.user_data = load_user_data(user_id)
     context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
     await update.message.reply_text("Какой новый город выберем?")
     
 async def set_radius_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    context.user_data = load_user_data(user_id)
+    user_id = update.effective_user.id; context.user_data = load_user_data(user_id)
     context.user_data['state'] = 'awaiting_radius'
     save_user_data(user_id, context.user_data)
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
@@ -90,23 +97,19 @@ async def set_radius_command(update: Update, context: CallbackContext) -> None:
 async def handle_text(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     context.user_data = load_user_data(user_id)
-    
     state = context.user_data.get('state')
     user_text = update.message.text
     
     if state == 'awaiting_city':
-        context.user_data['city'] = user_text
-        context.user_data['state'] = 'awaiting_address'
+        context.user_data['city'] = user_text; context.user_data['state'] = 'awaiting_address'
         save_user_data(user_id, context.user_data)
         await update.message.reply_text(f"Город '{user_text}' сохранен. Теперь отправьте улицу и номер дома.")
         return
-        
     elif state == 'awaiting_radius':
         try:
             new_radius = float(user_text.replace(',', '.'));
             if not (0.1 <= new_radius <= 10): raise ValueError()
-            context.user_data['radius_km'] = new_radius
-            context.user_data.pop('state', None)
+            context.user_data['radius_km'] = new_radius; context.user_data.pop('state', None)
             save_user_data(user_id, context.user_data)
             await update.message.reply_text(f"Радиус обновлен: {new_radius} км.")
             return
@@ -114,39 +117,28 @@ async def handle_text(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text("Неверный формат. Попробуйте еще раз."); return
 
     city = context.user_data.get('city')
-    if not city:
-        await start(update, context); return
-
+    if not city: await start(update, context); return
     full_address = f"{city}, {user_text}"
     await update.message.reply_text(f"Ищу заведения рядом с {full_address}...")
-    
     coords = get_coordinates(full_address)
     if not coords: await update.message.reply_text("Не смог найти такой адрес."); return
-
-    context.user_data['last_coords'] = coords
+    context.user_data['last_coords'] = [coords[0], coords[1]] # Store as list for JSON
     save_user_data(user_id, context.user_data)
     
     place = get_random_lunch_place(coords[0], coords[1], int(context.user_data.get('radius_km', DEFAULT_RADIUS_KM) * 1000))
     if not place: await update.message.reply_text(f"Ничего не найдено."); return
-
     name = place.get('name', 'N/A'); address = place.get('address_name', '')
     message_text = f"🎉 *Выбор сделан\\!* 🎉\n\n📍 *Название:* {escape_markdown_v2(name)}\n"
     if address: message_text += f"🏠 *Адрес:* {escape_markdown_v2(address)}\n"
-    
     url = place.get('url') or f"https://2gis.kz/search/{urllib.parse.quote_plus(full_address)}"
     message_text += f"\n[Посмотреть на карте 2GIS]({url})"
-    
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"),
-        InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")
-    ]])
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("Повторить поиск 🔁", callback_data="repeat_search"), InlineKeyboardButton("Сменить радиус 📏", callback_data="change_radius")]])
     await update.message.reply_markdown_v2(message_text, reply_markup=markup)
 
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query; await query.answer()
     user_id = update.effective_user.id
     context.user_data = load_user_data(user_id)
-    
     if query.data == "repeat_search":
         coords = context.user_data.get('last_coords')
         if not coords: await query.edit_message_text("Нет сохраненных координат. Начните с /start."); return
@@ -159,39 +151,35 @@ async def button_handler(update: Update, context: CallbackContext):
         url = place.get('url') or f"https://2gis.kz/search/{urllib.parse.quote_plus(context.user_data.get('city', '') + ', ')}"
         message_text += f"\n[Посмотреть на карте 2GIS]({url})"
         await query.edit_message_text(message_text, parse_mode='MarkdownV2', reply_markup=query.message.reply_markup)
-
     elif query.data == "change_radius":
         await set_radius_command(query, context)
 
-# --- FastAPI Boilerplate ---
-app = FastAPI(docs_url=None, redoc_url=None)
-application = None
-
-@app.on_event("startup")
-async def startup_event():
-    global application
-    bot_token = os.getenv("TELEGRAM_TOKEN")
-    application = Application.builder().token(bot_token).build()
+# --- FastAPI Main Handler ---
+@app.post("/api")
+async def telegram_webhook(request: Request):
+    """This function is the single entry point for all incoming Telegram updates."""
     
+    # Build the application and its handlers on each request
+    application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city_command))
     application.add_handler(CommandHandler("radius", set_radius_command))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    await application.initialize()
-    webhook_url = os.getenv("VERCEL_URL")
-    if webhook_url:
-        full_webhook_url = f"https://{webhook_url}/api"
-        await application.bot.set_webhook(full_webhook_url, allowed_updates=Update.ALL_TYPES)
-
-@app.post("/api")
-async def telegram_webhook(request: Request):
-    if not application: return Response(status_code=500)
     try:
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        async with application:
+            await application.initialize()
+            data = await request.json()
+            update = Update.de_json(data, application.bot)
+            await application.process_update(update)
+            await application.shutdown()
+            
     except Exception as e:
         logger.error(f"Error processing update: {e}", exc_info=True)
+        
     return Response(status_code=200)
+
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
