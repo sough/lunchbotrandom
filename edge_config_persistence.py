@@ -28,12 +28,16 @@ class EdgeConfigPersistence(BasePersistence):
         }
 
     def _read_all_data(self) -> dict:
+        """Helper to read all items from Edge Config and convert to a dict."""
         try:
             response = requests.get(self.api_endpoint, headers={"Authorization": f"Bearer {self.api_token}"}, timeout=5)
             response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to read from Edge Config: {e}")
+            # --- FIX IS HERE ---
+            # The API returns a dictionary with an "items" key, which contains the data
+            data = response.json()
+            return data.get("items", {})
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            logger.error(f"Failed to read or parse from Edge Config: {e}")
             return {}
 
     def _write_items(self, items: list) -> None:
@@ -47,15 +51,21 @@ class EdgeConfigPersistence(BasePersistence):
     # --- Implemented Abstract Methods ---
     async def get_user_data(self) -> dict[int, dict]:
         all_data = self._read_all_data()
-        user_data = all_data.get("user_data", {})
-        # Keys in JSON are strings, convert them back to integers
-        return {int(k): v for k, v in user_data.items()}
+        user_data_str = all_data.get("user_data")
+        if isinstance(user_data_str, str):
+            try:
+                user_data = json.loads(user_data_str)
+                # Keys in JSON are strings, convert them back to integers
+                return {int(k): v for k, v in user_data.items()}
+            except json.JSONDecodeError:
+                return {}
+        return user_data_str or {} # Return the dict if it's already a dict, or empty
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
-        # Fetch all user data first to not overwrite others
         all_user_data = await self.get_user_data()
         all_user_data[user_id] = data
-        self._write_items([{"operation": "update", "key": "user_data", "value": all_user_data}])
+        # Edge Config values must be JSON-serializable. We'll store the dict as a string.
+        self._write_items([{"operation": "update", "key": "user_data", "value": json.dumps(all_user_data)}])
     
     # --- Other required methods (simplified) ---
     async def get_bot_data(self) -> dict:
@@ -70,7 +80,7 @@ class EdgeConfigPersistence(BasePersistence):
     async def drop_user_data(self, user_id: int) -> None:
         all_user_data = await self.get_user_data()
         all_user_data.pop(user_id, None)
-        self._write_items([{"operation": "update", "key": "user_data", "value": all_user_data}])
+        self._write_items([{"operation": "update", "key": "user_data", "value": json.dumps(all_user_data)}])
     async def refresh_bot_data(self, bot_data: dict) -> None: bot_data.update(await self.get_bot_data())
     async def refresh_chat_data(self, chat_id: int, chat_data: dict) -> None: pass
     async def refresh_user_data(self, user_id: int, user_data: dict) -> None: 
