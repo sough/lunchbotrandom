@@ -5,9 +5,7 @@ import logging
 from fastapi import FastAPI, Request, Response
 from telegram import Update
 from telegram.ext import Application
-
-# Import the function that adds handlers
-from bot_logic_v5 import add_handlers
+from bot_logic import add_handlers
 
 # --- FastAPI Boilerplate ---
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -15,10 +13,8 @@ BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 @app.post("/api")
 async def telegram_webhook(request: Request):
-    """
-    This function is the single entry point. It creates, initializes,
-    and runs the bot for each incoming request.
-    """
+    """This function is the single entry point for all incoming Telegram updates."""
+    
     # Create a new application instance for each request
     application = Application.builder().token(BOT_TOKEN).build()
     

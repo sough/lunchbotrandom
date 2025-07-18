@@ -3,8 +3,7 @@ import logging, os, random, requests, math, urllib.parse, json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
 
-# Import database functions
-from persistence_v5 import load_user_data, save_user_data
+from persistence import load_user_data, save_user_data
 
 # --- Setup & Constants ---
 logger = logging.getLogger(__name__)
@@ -39,31 +38,29 @@ def get_random_lunch_place(lat: float, lon: float, radius_meters: int) -> dict |
 # --- Main Bot Logic ---
 async def start(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
-    context.user_data.clear()
-    context.user_data.update(load_user_data(user_id))
+    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
     
     start_message = (f"Привет, {update.effective_user.mention_html()}!\n\n"
                      f"Текущий радиус поиска: <b>{current_radius} км</b>.\n\n")
     if 'city' in context.user_data:
         start_message += f"Ваш сохраненный город: <b>{context.user_data['city']}</b>. Просто отправьте улицу и номер дома."
+        context.user_data['state'] = 'awaiting_address'
     else:
         start_message += "Для начала, пожалуйста, напишите мне свой город."
+        context.user_data['state'] = 'awaiting_city'
     
-    context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
     await update.message.reply_html(start_message)
 
 async def set_city_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_city'
     save_user_data(user_id, context.user_data)
     await update.message.reply_text("Какой новый город выберем?")
     
 async def set_radius_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    context.user_data.clear(); context.user_data.update(load_user_data(user_id))
+    user_id = update.effective_user.id; context.user_data.clear(); context.user_data.update(load_user_data(user_id))
     context.user_data['state'] = 'awaiting_radius'
     save_user_data(user_id, context.user_data)
     current_radius = context.user_data.get('radius_km', DEFAULT_RADIUS_KM)
@@ -134,7 +131,7 @@ async def button_handler(update: Update, context: CallbackContext):
         await set_radius_command(query, context)
 
 def add_handlers(application: Application):
-    """Adds all the handlers to the application."""
+    """Adds all handlers to the application."""
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setcity", set_city_command))
     application.add_handler(CommandHandler("radius", set_radius_command))
