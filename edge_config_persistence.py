@@ -9,7 +9,8 @@ class EdgeConfigPersistence(BasePersistence):
     A persistence class that uses Vercel Edge Config via its REST API.
     """
     def __init__(self):
-        super().__init__(store_callback_data=False)
+        # The `store_callback_data` argument has been removed from this call
+        super().__init__()
         self.edge_config_url = os.getenv("EDGE_CONFIG")
         if not self.edge_config_url:
             raise ValueError("EDGE_CONFIG environment variable not set.")
@@ -49,7 +50,6 @@ class EdgeConfigPersistence(BasePersistence):
         """Helper to delete an item."""
         self._write_items([{"operation": "delete", "key": key}])
 
-
     async def get_bot_data(self) -> dict:
         data = self._read_single_item("bot_data")
         return pickle.loads(bytes.fromhex(data)) if data else {}
@@ -59,7 +59,6 @@ class EdgeConfigPersistence(BasePersistence):
         self._write_items([{"operation": "update", "key": "bot_data", "value": value}])
 
     async def get_chat_data(self) -> dict[int, dict]:
-        # This implementation fetches data on demand.
         return {}
 
     async def update_chat_data(self, chat_id: int, data: dict) -> None:
@@ -68,7 +67,6 @@ class EdgeConfigPersistence(BasePersistence):
         self._write_items([{"operation": "update", "key": key, "value": value}])
 
     async def get_user_data(self) -> dict[int, dict]:
-        # This implementation fetches data on demand.
         return {}
 
     async def update_user_data(self, user_id: int, data: dict) -> None:
@@ -91,7 +89,6 @@ class EdgeConfigPersistence(BasePersistence):
         value = pickle.dumps(conversations).hex()
         self._write_items([{"operation": "update", "key": redis_key, "value": value}])
 
-    # --- NEWLY IMPLEMENTED METHODS ---
     async def drop_chat_data(self, chat_id: int) -> None:
         self._delete_item(f"chat_{chat_id}")
 
