@@ -136,7 +136,6 @@ async def button_handler(update: Update, context: CallbackContext):
 # --- FastAPI Webhook ---
 @app.post("/api")
 async def telegram_webhook(request: Request):
-    # Use PicklePersistence with the temporary /tmp directory
     persistence = PicklePersistence(filepath="/tmp/bot_persistence")
     application = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
     
