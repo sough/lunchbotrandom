@@ -62,7 +62,7 @@ async def perform_search_and_reply(update: Update, context: CallbackContext):
         else: await update.message.reply_text(text=message_text)
         return
     name = place.get('name', 'N/A'); address = place.get('address_name', '')
-    url = place.get('url') or f"https://2gis.kz/search/{urllib.parse.quote_plus(full_address)}"
+    url = place.get('url') or f"https://2gis.kz/search/{urllib.parse.quote_plus(address)}"
     title = "🎉 Новый вариант!" if query else "🎉 Выбор сделан!"
     message_text = f"{title}\n\n📍 **Название:** {name}\n"
     if address: message_text += f"🏠 **Адрес:** {address}\n"
